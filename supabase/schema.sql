@@ -24,20 +24,20 @@ CREATE TABLE flights (
   cityfrom TEXT,
   tocode TEXT,
   cityto TEXT,
-  departuredate TEXT,
-  departuretime TEXT,
-  arrivaldate TEXT,
-  arrivaltime TEXT,
+  departuredate DATE,
+  departuretime TIME,
+  arrivaldate DATE,
+  arrivaltime TIME,
   confirmationcode TEXT,
   duration TEXT,
   managelink TEXT,
   assignedto TEXT,
-  amount TEXT,
+  amount NUMERIC(12,2),
   currency TEXT,
-  bookingdate TEXT,
+  bookingdate DATE,
   trip TEXT,
-  fxrate TEXT,
-  inrequivalent TEXT,
+  fxrate NUMERIC(10,4),
+  inrequivalent NUMERIC(12,2),
   amounttype TEXT,
   paymentmethod TEXT
 );
@@ -49,18 +49,18 @@ CREATE TABLE hotels (
   hotelname TEXT,
   address TEXT,
   city TEXT,
-  checkindate TEXT,
-  checkoutdate TEXT,
+  checkindate DATE,
+  checkoutdate DATE,
   confirmationcode TEXT,
   bookinglink TEXT,
   cancellationdeadline TEXT,
-  bookedprice TEXT,
+  bookedprice NUMERIC(12,2),
   assignedto TEXT,
   currency TEXT,
-  bookingdate TEXT,
+  bookingdate DATE,
   trip TEXT,
-  fxrate TEXT,
-  inrequivalent TEXT,
+  fxrate NUMERIC(10,4),
+  inrequivalent NUMERIC(12,2),
   amounttype TEXT,
   paymentmethod TEXT,
   mapslink TEXT,
@@ -81,18 +81,18 @@ CREATE TABLE trains (
   cityfrom TEXT,
   tocode TEXT,
   cityto TEXT,
-  departuredate TEXT,
-  departuretime TEXT,
-  arrivaldate TEXT,
-  arrivaltime TEXT,
+  departuredate DATE,
+  departuretime TIME,
+  arrivaldate DATE,
+  arrivaltime TIME,
   pnr TEXT,
   assignedto TEXT,
-  amount TEXT,
+  amount NUMERIC(12,2),
   currency TEXT,
-  bookingdate TEXT,
+  bookingdate DATE,
   trip TEXT,
-  fxrate TEXT,
-  inrequivalent TEXT,
+  fxrate NUMERIC(10,4),
+  inrequivalent NUMERIC(12,2),
   amounttype TEXT,
   paymentmethod TEXT,
   class TEXT
@@ -108,18 +108,18 @@ CREATE TABLE buses (
   cityfrom TEXT,
   to_station TEXT,
   cityto TEXT,
-  departuredate TEXT,
-  departuretime TEXT,
-  arrivaldate TEXT,
-  arrivaltime TEXT,
+  departuredate DATE,
+  departuretime TIME,
+  arrivaldate DATE,
+  arrivaltime TIME,
   ticketnumber TEXT,
   assignedto TEXT,
-  amount TEXT,
+  amount NUMERIC(12,2),
   currency TEXT,
-  bookingdate TEXT,
+  bookingdate DATE,
   trip TEXT,
-  fxrate TEXT,
-  inrequivalent TEXT,
+  fxrate NUMERIC(10,4),
+  inrequivalent NUMERIC(12,2),
   amounttype TEXT,
   paymentmethod TEXT
 );
@@ -128,8 +128,8 @@ CREATE TABLE buses (
 CREATE TABLE events (
   id SERIAL PRIMARY KEY,
   eventname TEXT,
-  startdate TEXT,
-  enddate TEXT,
+  startdate DATE,
+  enddate DATE,
   location TEXT,
   type TEXT,
   ourrole TEXT,
@@ -140,31 +140,31 @@ CREATE TABLE events (
 -- 8. Expenses
 CREATE TABLE expenses (
   id SERIAL PRIMARY KEY,
-  timestamp TEXT,
+  timestamp TIMESTAMPTZ,
   username TEXT,
   name TEXT,
   trip TEXT,
   category TEXT,
-  amount TEXT,
+  amount NUMERIC(12,2),
   currency TEXT,
   description TEXT,
   receipturl TEXT,
-  fxrate TEXT,
-  inrequivalent TEXT,
+  fxrate NUMERIC(10,4),
+  inrequivalent NUMERIC(12,2),
   paymentmethod TEXT,
   receiptmimetype TEXT,
   cardused TEXT,
-  expensedate TEXT
+  expensedate DATE
 );
 
 -- 9. Advances
 CREATE TABLE advances (
   id SERIAL PRIMARY KEY,
-  timestamp TEXT,
+  timestamp TIMESTAMPTZ,
   username TEXT,
   name TEXT,
   trip TEXT,
-  amount TEXT,
+  amount NUMERIC(12,2),
   method TEXT,
   givenby TEXT
 );
@@ -172,11 +172,11 @@ CREATE TABLE advances (
 -- 10. Allowances
 CREATE TABLE allowances (
   id SERIAL PRIMARY KEY,
-  timestamp TEXT,
+  timestamp TIMESTAMPTZ,
   username TEXT,
   name TEXT,
   trip TEXT,
-  amount TEXT,
+  amount NUMERIC(12,2),
   method TEXT,
   setby TEXT
 );
@@ -184,15 +184,15 @@ CREATE TABLE allowances (
 -- 11. Notes & Reminders
 CREATE TABLE notes_reminders (
   id SERIAL PRIMARY KEY,
-  timestamp TEXT,
+  timestamp TIMESTAMPTZ,
   username TEXT,
   name TEXT,
   type TEXT,
   text TEXT,
-  duedate TEXT,
+  duedate DATE,
   category TEXT,
   status TEXT,
-  duetime TEXT
+  duetime TIME
 );
 
 -- 12. Documents
@@ -203,7 +203,7 @@ CREATE TABLE documents (
   confirmationcode TEXT,
   passengername TEXT,
   fileurl TEXT,
-  uploadedat TEXT
+  uploadedat TIMESTAMPTZ
 );
 
 -- 13. Sessions

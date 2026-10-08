@@ -32,11 +32,12 @@ export function getPreferredCanonicalName(u: { name?: string; username?: string 
   return formatShort(n || un);
 }
 
-export function splitPassengerList(raw: string | undefined): string[] {
+export function splitPassengerList(raw: string | string[] | undefined | null): string[] {
   if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
   // Split on commas, semicolons, ampersands, plus signs, newlines, or " and "
   // Do NOT split on slashes '/' because airlines use '/' between surname and given name (e.g. HEMAN/VISHWAS)
-  return raw
+  return String(raw)
     .split(/[,;&+\n]|\band\b/i)
     .map((s) => s.trim())
     .filter(Boolean);

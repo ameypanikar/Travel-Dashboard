@@ -93,9 +93,10 @@ export function sortTripOptions(options: string[], events: TravelEvent[]): strin
   });
 }
 
-export function parseAmount(raw?: string): number {
+export function parseAmount(raw?: string | number | null): number {
+  if (typeof raw === "number") return raw;
   if (!raw) return NaN;
-  const cleaned = raw.replace(/[^0-9.-]/g, "");
+  const cleaned = String(raw).replace(/[^0-9.-]/g, "");
   return parseFloat(cleaned);
 }
 
