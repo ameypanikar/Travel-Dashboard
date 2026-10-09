@@ -58,22 +58,22 @@ Air travel bookings, itinerary timings, seat allocations, and costs.
 | :--- | :--- | :--- |
 | `id` | `SERIAL PRIMARY KEY` | Auto-incrementing identifier. |
 | `bookingstatus` | `TEXT DEFAULT 'Booked'` | Status: `Booked` or `Cancelled`. |
-| `airline` | `TEXT` | Airline name and flight number (e.g. `IndiGo 6E 532`). |
+| `airline` | `TEXT,` | Airline name and flight number (e.g. `IndiGo 6E 532`). |
 | `fromcode` / `cityfrom` | `TEXT` | Origin airport 3-letter IATA code and city name (e.g. `PNQ`, `Pune`). |
 | `tocode` / `cityto` | `TEXT` | Destination IATA code and city name (e.g. `DEL`, `Delhi`). |
-| `departuredate` / `departuretime`| `TEXT` | Scheduled departure date (`DD/MM/YYYY`) and time (`HH:mm`). |
-| `arrivaldate` / `arrivaltime` | `TEXT` | Scheduled arrival date (`DD/MM/YYYY`) and time (`HH:mm`). |
-| `confirmationcode` | `TEXT` | 6-character airline PNR (e.g. `WZ4KLM`). |
-| `duration` | `TEXT` | Flight duration (e.g. `2h 15m`). |
-| `managelink` | `TEXT` | Direct airline web check-in or manage booking URL. |
-| `assignedto` | `TEXT` | Comma-separated list of passenger names (e.g. `Vishwas H, Rajesh K`). |
-| `amount` | `TEXT` | Flight booking cost in booking currency. |
+| `departuredate` / `departuretime`| `DATE` / `TIME` | Scheduled departure date (`YYYY-MM-DD`) and time (`HH:mm`). |
+| `arrivaldate` / `arrivaltime` | `DATE` / `TIME` | Scheduled arrival date (`YYYY-MM-DD`) and time (`HH:mm`). |
+| `confirmationcode` | `TEXT,` | 6-character airline PNR (e.g. `WZ4KLM`). |
+| `duration` | `TEXT,` | Flight duration (e.g. `2h 15m`). |
+| `managelink` | `TEXT,` | Direct airline web check-in or manage booking URL. |
+| `assignedto` | `TEXT,` | Comma-separated list of passenger names (e.g. `Vishwas H, Rajesh K`). |
+| `amount` | `NUMERIC(12,2),` | Flight booking cost in booking currency. |
 | `currency` | `TEXT DEFAULT 'INR'` | Currency code (`INR`, `USD`, `EUR`, `AED`, etc.). |
 | `amounttype` | `TEXT DEFAULT 'total'` | Cost division model: `total` (shared) or `perperson`. |
-| `fxrate` | `TEXT` | Foreign exchange rate against INR applied at booking time. |
-| `inrequivalent` | `TEXT` | Computed booking amount in Indian Rupees (INR). |
-| `bookingdate` | `TEXT` | Date booking was made. |
-| `trip` | `TEXT` | Name of corporate event or trip (e.g. `Hannover Messe 2026`). |
+| `fxrate` | `NUMERIC(10,4),` | Foreign exchange rate against INR applied at booking time. |
+| `inrequivalent` | `NUMERIC(12,2),` | Computed booking amount in Indian Rupees (INR). |
+| `bookingdate` | `DATE,` | Date booking was made. |
+| `trip` | `TEXT,` | Name of corporate event or trip (e.g. `Hannover Messe 2026`). |
 | `paymentmethod` | `TEXT` | Payment instrument: `Cash`, `Card`, `GPay`, or `Company Account`. |
 
 ### 1.5 `hotels`
@@ -82,23 +82,23 @@ Hotel accommodations, room allocations, check-in/out, and address details.
 | :--- | :--- | :--- |
 | `id` | `SERIAL PRIMARY KEY` | Auto-incrementing identifier. |
 | `bookingstatus` | `TEXT DEFAULT 'Booked'` | Status: `Booked` or `Cancelled`. |
-| `hotelname` | `TEXT` | Name of hotel or stay property. |
+| `hotelname` | `TEXT,` | Name of hotel or stay property. |
 | `address` / `city` | `TEXT` | Full street address and city. |
-| `checkindate` / `checkoutdate` | `TEXT` | Check-in and check-out dates (`DD/MM/YYYY`). |
-| `confirmationcode` | `TEXT` | Hotel reservation reference code. |
-| `bookinglink` | `TEXT` | Direct link to reservation or hotel voucher. |
-| `mapslink` | `TEXT` | Google Maps deep link for one-click navigation. |
+| `checkindate` / `checkoutdate` | `DATE` | Check-in and check-out dates (`YYYY-MM-DD`). |
+| `confirmationcode` | `TEXT,` | Hotel reservation reference code. |
+| `bookinglink` | `TEXT,` | Direct link to reservation or hotel voucher. |
+| `mapslink` | `TEXT,` | Google Maps deep link for one-click navigation. |
 | `latitude` / `longitude` | `TEXT` | Geolocation coordinates for map routing. |
-| `phone` | `TEXT` | Front desk or concierge contact number. |
-| `numberofrooms` | `TEXT` | Total rooms booked. |
+| `phone` | `TEXT,` | Front desk or concierge contact number. |
+| `numberofrooms` | `TEXT,` | Total rooms booked. |
 | `roomassignments` | `TEXT` | Details of room allocations (e.g. `Room 304: Rajesh & Somning`). |
-| `cancellationdeadline` | `TEXT` | Free cancellation cutoff date/time. |
-| `bookedprice` | `TEXT` | Total hotel stay cost in booking currency. |
-| `assignedto` | `TEXT` | Comma-separated list of occupants. |
+| `cancellationdeadline` | `TEXT,` | Free cancellation cutoff date/time. |
+| `bookedprice` | `NUMERIC(12,2),` | Total hotel stay cost in booking currency. |
+| `assignedto` | `TEXT,` | Comma-separated list of occupants. |
 | `currency` | `TEXT DEFAULT 'INR'` | Currency code. |
 | `amounttype` | `TEXT DEFAULT 'total'` | Cost division model: `total` or `perperson`. |
-| `fxrate` / `inrequivalent` | `TEXT` | Foreign exchange conversion rate and INR equivalent. |
-| `trip` | `TEXT` | Associated trip or conference name. |
+| `fxrate` / `inrequivalent` | `NUMERIC(10,4)` / `NUMERIC(12,2)` | Foreign exchange conversion rate and INR equivalent. |
+| `trip` | `TEXT,` | Associated trip or conference name. |
 
 ### 1.6 `trains`
 Indian Railways (IRCTC) transit bookings.
@@ -109,13 +109,13 @@ Indian Railways (IRCTC) transit bookings.
 | `trainnumber` / `trainname` | `TEXT` | 5-digit IRCTC train number (e.g. `12124`) and train name (e.g. `Deccan Queen`). |
 | `fromcode` / `cityfrom` | `TEXT` | Origin railway station code and city (e.g. `PUNE`, `Pune Junction`). |
 | `tocode` / `cityto` | `TEXT` | Destination station code and city (e.g. `CSMT`, `Mumbai CSMT`). |
-| `departuredate` / `departuretime`| `TEXT` | Scheduled departure date and time. |
-| `arrivaldate` / `arrivaltime` | `TEXT` | Scheduled arrival date and time. |
-| `pnr` | `TEXT` | 10-digit IRCTC PNR number for live tracking. |
+| `departuredate` / `departuretime`| `DATE` / `TIME` | Scheduled departure date and time. |
+| `arrivaldate` / `arrivaltime` | `DATE` / `TIME` | Scheduled arrival date and time. |
+| `pnr` | `TEXT,` | 10-digit IRCTC PNR number for live tracking. |
 | `class` | `TEXT` | Travel class: `1A`, `2A`, `3A`, `CC`, `SL`, `EC`. |
-| `assignedto` | `TEXT` | Assigned travelers. |
-| `amount` / `currency` / `inrequivalent` | `TEXT` | Ticket cost and currency equivalent. |
-| `trip` | `TEXT` | Associated trip name. |
+| `assignedto` | `TEXT,` | Assigned travelers. |
+| `amount` / `currency` / `inrequivalent` | `NUMERIC(12,2)` / `TEXT` / `NUMERIC(12,2)` | Ticket cost and currency equivalent. |
+| `trip` | `TEXT,` | Associated trip name. |
 
 ### 1.7 `buses`
 Intercity bus transit bookings.
@@ -126,24 +126,24 @@ Intercity bus transit bookings.
 | `busoperator` / `busnumber` | `TEXT` | Operator name (e.g. `VRL Travels`, `Zingbus`) and bus number. |
 | `from_station` / `cityfrom` | `TEXT` | Boarding point name and city. |
 | `to_station` / `cityto` | `TEXT` | Drop-off point name and city. |
-| `departuredate` / `departuretime`| `TEXT` | Boarding date and time. |
-| `arrivaldate` / `arrivaltime` | `TEXT` | Arrival date and time. |
-| `ticketnumber` | `TEXT` | Bus ticket or booking reference. |
-| `assignedto` | `TEXT` | Assigned travelers. |
-| `amount` / `currency` / `inrequivalent` | `TEXT` | Ticket cost and currency equivalent. |
-| `trip` | `TEXT` | Associated trip name. |
+| `departuredate` / `departuretime`| `DATE` / `TIME` | Boarding date and time. |
+| `arrivaldate` / `arrivaltime` | `DATE` / `TIME` | Arrival date and time. |
+| `ticketnumber` | `TEXT,` | Bus ticket or booking reference. |
+| `assignedto` | `TEXT,` | Assigned travelers. |
+| `amount` / `currency` / `inrequivalent` | `NUMERIC(12,2)` / `TEXT` / `NUMERIC(12,2)` | Ticket cost and currency equivalent. |
+| `trip` | `TEXT,` | Associated trip name. |
 
 ### 1.8 `events`
 Company business trips, exhibitions, client visits, and conferences.
 | Column | Type | Description |
 | :--- | :--- | :--- |
 | `id` | `SERIAL PRIMARY KEY` | Auto-incrementing identifier. |
-| `eventname` | `TEXT` | Event name (e.g. `Electronica India 2026`, `General Travel`). |
-| `startdate` / `enddate` | `TEXT` | Start and conclusion dates (`DD/MM/YYYY`). |
-| `location` | `TEXT` | Venue city or exhibition center. |
-| `type` | `TEXT` | Category: `Exhibition`, `Client Visit`, `Conference`, `Standing Tour`. |
-| `ourrole` | `TEXT` | Company role: `Exhibitor`, `Attendee`, `Speaker`. |
-| `notes` | `TEXT` | Logistics, booth numbers, and objectives. |
+| `eventname` | `TEXT,` | Event name (e.g. `Electronica India 2026`, `General Travel`). |
+| `startdate` / `enddate` | `DATE` | Start and conclusion dates (`YYYY-MM-DD`). |
+| `location` | `TEXT,` | Venue city or exhibition center. |
+| `type` | `TEXT,` | Category: `Exhibition`, `Client Visit`, `Conference`, `Standing Tour`. |
+| `ourrole` | `TEXT,` | Company role: `Exhibitor`, `Attendee`, `Speaker`. |
+| `notes` | `TEXT,` | Logistics, booth numbers, and objectives. |
 | `status` | `TEXT DEFAULT 'Booked'`| `Booked` or `Cancelled`. |
 
 ### 1.9 `expenses`
@@ -151,29 +151,29 @@ Itemized travel expenditures logged by employees on the road.
 | Column | Type | Description |
 | :--- | :--- | :--- |
 | `id` | `SERIAL PRIMARY KEY` | Auto-incrementing identifier. |
-| `timestamp` | `TEXT` | Creation timestamp. |
+| `timestamp` | `TIMESTAMPTZ,` | Creation timestamp. |
 | `username` / `name` | `TEXT` | Username and full name of the employee who paid. |
-| `trip` | `TEXT` | Associated trip name. |
-| `category` | `TEXT` | `Food`, `Transport (Auto/Taxi)`, `Petrol/Diesel`, `Toll`, or `Misc. Expenses`. |
-| `amount` / `currency` | `TEXT` | Amount paid and currency code. |
-| `description` | `TEXT` | Expense description (e.g. `Dinner with client`, `Airport cab`). |
-| `receipturl` | `TEXT` | Public URL to receipt image in Supabase Storage. |
-| `receiptmimetype` | `TEXT` | MIME type (e.g. `image/jpeg`, `image/png`, `application/pdf`). |
-| `fxrate` / `inrequivalent` | `TEXT` | Foreign exchange rate and calculated INR cost. |
-| `paymentmethod` | `TEXT` | `Cash`, `Card`, or `GPay`. |
-| `cardused` | `TEXT` | Specific corporate card if paid via Card (e.g. `XXXX 6002`). |
-| `expensedate` | `TEXT` | Date expense occurred. |
+| `trip` | `TEXT,` | Associated trip name. |
+| `category` | `TEXT,` | `Food`, `Transport (Auto/Taxi)`, `Petrol/Diesel`, `Toll`, or `Misc. Expenses`. |
+| `amount` / `currency` | `NUMERIC(12,2)` / `TEXT` | Amount paid and currency code. |
+| `description` | `TEXT,` | Expense description (e.g. `Dinner with client`, `Airport cab`). |
+| `receipturl` | `TEXT,` | Public URL to receipt image in Supabase Storage. |
+| `receiptmimetype` | `TEXT,` | MIME type (e.g. `image/jpeg`, `image/png`, `application/pdf`). |
+| `fxrate` / `inrequivalent` | `NUMERIC(10,4)` / `NUMERIC(12,2)` | Foreign exchange rate and calculated INR cost. |
+| `paymentmethod` | `TEXT,` | `Cash`, `Card`, or `GPay`. |
+| `cardused` | `TEXT,` | Specific corporate card if paid via Card (e.g. `XXXX 6002`). |
+| `expensedate` | `DATE` | Date expense occurred. |
 
 ### 1.10 `advances`
 Company funds disbursed to travelers prior to departure.
 | Column | Type | Description |
 | :--- | :--- | :--- |
 | `id` | `SERIAL PRIMARY KEY` | Auto-incrementing identifier. |
-| `timestamp` | `TEXT` | Creation timestamp. |
+| `timestamp` | `TIMESTAMPTZ,` | Creation timestamp. |
 | `username` / `name` | `TEXT` | Recipient employee username and name. |
-| `trip` | `TEXT` | Associated trip name. |
-| `amount` | `TEXT` | Advance amount in INR. |
-| `method` | `TEXT` | Disbursal method: `Cash`, `Bank Transfer`, `Company Card`. |
+| `trip` | `TEXT,` | Associated trip name. |
+| `amount` | `NUMERIC(12,2),` | Advance amount in INR. |
+| `method` | `TEXT,` | Disbursal method: `Cash`, `Bank Transfer`, `Company Card`. |
 | `givenby` | `TEXT` | Manager or Accounts personnel who issued the advance. |
 
 ### 1.11 `allowances`
@@ -181,11 +181,11 @@ Daily travel allowances (per diem) credited to employees for trip days.
 | Column | Type | Description |
 | :--- | :--- | :--- |
 | `id` | `SERIAL PRIMARY KEY` | Auto-incrementing identifier. |
-| `timestamp` | `TEXT` | Creation timestamp. |
+| `timestamp` | `TIMESTAMPTZ,` | Creation timestamp. |
 | `username` / `name` | `TEXT` | Recipient employee. |
-| `trip` | `TEXT` | Associated trip name. |
-| `amount` | `TEXT` | Total daily allowance calculated for the trip in INR. |
-| `method` | `TEXT` | Disbursal method. |
+| `trip` | `TEXT,` | Associated trip name. |
+| `amount` | `NUMERIC(12,2),` | Total daily allowance calculated for the trip in INR. |
+| `method` | `TEXT,` | Disbursal method. |
 | `setby` | `TEXT` | HR or manager who approved the allowance. |
 
 ### 1.12 `notes_reminders`
@@ -193,25 +193,25 @@ Zero-knowledge encrypted personal notes and reminders.
 | Column | Type | Description |
 | :--- | :--- | :--- |
 | `id` | `SERIAL PRIMARY KEY` | Auto-incrementing identifier. |
-| `timestamp` | `TEXT` | Creation timestamp. |
+| `timestamp` | `TIMESTAMPTZ,` | Creation timestamp. |
 | `username` / `name` | `TEXT` | Owner employee. |
-| `type` | `TEXT` | `note` or `reminder`. |
-| `text` | `TEXT` | **AES-256-GCM encrypted ciphertext** (Base64). |
-| `duedate` / `duetime` | `TEXT` | Reminder deadline date and time. |
-| `category` | `TEXT` | **AES-256-GCM encrypted ciphertext** (Base64). |
-| `status` | `TEXT` | `Pending` or `Completed`. |
+| `type` | `TEXT,` | `note` or `reminder`. |
+| `text` | `TEXT,` | **AES-256-GCM encrypted ciphertext** (Base64). |
+| `duedate` / `duetime` | `DATE` / `TIME` | Reminder deadline date and time. |
+| `category` | `TEXT,` | **AES-256-GCM encrypted ciphertext** (Base64). |
+| `status` | `TEXT,` | `Pending` or `Completed`. |
 
 ### 1.13 `documents`
 Boarding passes, tickets, DigiYatra QR codes, and hotel vouchers.
 | Column | Type | Description |
 | :--- | :--- | :--- |
 | `id` | `SERIAL PRIMARY KEY` | Auto-incrementing identifier. |
-| `type` | `TEXT` | Booking type: `flight` or `hotel`. |
-| `category` | `TEXT` | `ticket`, `boardingpass`, `confirmation`, or `digiyatra`. |
-| `confirmationcode` | `TEXT` | Matching PNR or hotel reservation code. |
-| `passengername` | `TEXT` | Passenger name. |
-| `fileurl` | `TEXT` | Supabase Storage URL. |
-| `uploadedat` | `TEXT` | Upload timestamp. |
+| `type` | `TEXT,` | Booking type: `flight` or `hotel`. |
+| `category` | `TEXT,` | `ticket`, `boardingpass`, `confirmation`, or `digiyatra`. |
+| `confirmationcode` | `TEXT,` | Matching PNR or hotel reservation code. |
+| `passengername` | `TEXT,` | Passenger name. |
+| `fileurl` | `TEXT,` | Supabase Storage URL. |
+| `uploadedat` | `TIMESTAMPTZ` | Upload timestamp. |
 
 ---
 
@@ -300,6 +300,11 @@ To pass authentication context to Supabase's PostgREST API without modifying sta
    ```
 
 ---
+
+
+### Date Serialization Interceptor
+Because the database uses strict `DATE` columns (enforcing `YYYY-MM-DD` ISO layout), but the frontend UI components internally render and parse European-style `DD/MM/YYYY` strings, an interception layer is built into `src/lib/dashboard-api.ts`.
+A `serializeDates()` wrapper automatically mutates outgoing JSON payloads during `.insert()` and `.update()` Supabase calls to transpose the formats, ensuring flawless compatibility between the strictly-typed backend and the flexible frontend.
 
 ## 3. Row-Level Security (RLS) Enforcement
 

@@ -73,7 +73,12 @@ export async function autoRouteTransportTicket(
       onStatus("Retrying extraction...");
       continue;
     }
-    if (!res.ok) throw new Error(`Gemini error ${res.status}`);
+    if (!res.ok) {
+      if (res.status === 401) {
+        throw new Error("SYSTEM UPDATE REQUIRED: Your Gemini API token is outdated or invalid. Please check your settings.");
+      }
+      throw new Error(`Gemini error ${res.status}`);
+    }
 
     const json = await res.json();
     const text: string = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";

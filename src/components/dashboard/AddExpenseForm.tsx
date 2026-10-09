@@ -164,6 +164,9 @@ async function extractReceiptFieldsWithRetry(
 
     if (!res.ok) {
       const t = await res.text();
+      if (res.status === 401) {
+        throw new Error("SYSTEM UPDATE REQUIRED: Your Gemini API token is outdated or invalid. Please check your settings.");
+      }
       throw new Error(`Gemini error ${res.status}: ${t}`);
     }
 
@@ -970,9 +973,28 @@ export function AddExpenseForm({
             )}
 
             {extractError && (
-              <div className="mt-2 rounded border border-destructive/20 bg-destructive/5 p-2 text-[11px] text-destructive">
-                {extractError}
-              </div>
+              extractError.includes("SYSTEM UPDATE REQUIRED") ? (
+                <div className="mt-2 rounded border border-destructive/20 bg-destructive/5 py-2 overflow-hidden flex whitespace-nowrap relative w-full">
+                  <style>{`
+                    @keyframes marquee-rtl {
+                      0% { transform: translateX(100%); }
+                      100% { transform: translateX(-100%); }
+                    }
+                    .animate-marquee-local {
+                      animation: marquee-rtl 15s linear infinite;
+                      will-change: transform;
+                    }
+                  `}</style>
+                  <div className="animate-marquee-local text-[11px] font-semibold text-destructive tracking-wide w-full flex-shrink-0 flex gap-8">
+                    <span>🚀 {extractError}</span>
+                    <span>🚀 {extractError}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 rounded border border-destructive/20 bg-destructive/5 p-2 text-[11px] text-destructive">
+                  {extractError}
+                </div>
+              )
             )}
             <p className="mt-1.5 text-[10px] text-muted-foreground">
               {t("add_expense.receipt_desc")}

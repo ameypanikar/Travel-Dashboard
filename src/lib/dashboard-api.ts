@@ -302,7 +302,7 @@ export async function updateEventWithCascade(
   const supabase = getSupabase();
   
   // 1. Update the event
-  const { error: eventError } = await supabase.from('events').update({ ...fields }).eq('id', sourceRow);
+  const { error: eventError } = await supabase.from('events').update(serializeDates({ ...fields })).eq('id', sourceRow);
   if (eventError) throw new Error("Failed to update event");
 
   // 2. Cascade event name changes to related tables
@@ -313,6 +313,19 @@ export async function updateEventWithCascade(
       await supabase.from(table).update({ trip: fields.eventname }).eq('trip', oldEventName);
     }
   }
+}
+
+
+function serializeDates(fields: Record<string, any>) {
+  const res = { ...fields };
+  for (const k of Object.keys(res)) {
+    const val = res[k];
+    if (typeof val === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(val.trim())) {
+      const parts = val.trim().split('/');
+      res[k] = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  }
+  return res;
 }
 
 export async function addBooking(kind: string, fields: any): Promise<void> {
@@ -340,13 +353,13 @@ export async function addBooking(kind: string, fields: any): Promise<void> {
       : fields.flight_number;
   }
 
-  let { error } = await getSupabase().from(table).insert(flatFields);
+  let { error } = await getSupabase().from(table).insert(serializeDates(flatFields));
 
   while (error && (error.code === 'PGRST204' || error.message?.includes('Could not find the'))) {
     const match = error.message.match(/Could not find the '([^']+)' column/);
     if (match && match[1] && match[1] in flatFields) {
       delete flatFields[match[1]];
-      const res = await getSupabase().from(table).insert(flatFields);
+      const res = await getSupabase().from(table).insert(serializeDates(flatFields));
       error = res.error;
     } else {
       break;
@@ -376,13 +389,13 @@ export async function updateBookingStatus(params: {
     ? { status: params.status }
     : { bookingstatus: params.status };
 
-  let { error } = await getSupabase().from(table).update(payload).eq('id', params.sourceRow);
+  let { error } = await getSupabase().from(table).update(serializeDates(payload)).eq('id', params.sourceRow);
 
   while (error && (error.code === 'PGRST204' || error.message?.includes('Could not find the'))) {
     const match = error.message.match(/Could not find the '([^']+)' column/);
     if (match && match[1] && match[1] in payload) {
       delete payload[match[1]];
-      const res = await getSupabase().from(table).update(payload).eq('id', params.sourceRow);
+      const res = await getSupabase().from(table).update(serializeDates(payload)).eq('id', params.sourceRow);
       error = res.error;
     } else {
       break;
@@ -419,14 +432,14 @@ export async function uploadDocument(params: {
 
   const { data: { publicUrl } } = getSupabase().storage.from('documents').getPublicUrl(fileName);
 
-  const { error: dbError } = await getSupabase().from('documents').insert({
+  const { error: dbError } = await getSupabase().from('documents').insert(serializeDates({
     type: params.type,
     category: params.category,
     confirmationcode: params.confirmationCode,
     passengername: params.passengerName || '',
     fileurl: publicUrl,
     uploadedat: new Date().toISOString()
-  });
+  }));
 
   if (dbError) throw new Error("Failed to save document metadata");
 
@@ -442,7 +455,7 @@ export async function updateBookingFields(params: {
   const table = params.kind === "bus" ? "buses" : params.kind + "s";
   const payload: Record<string, any> = { ...params.fields };
 
-  let { error } = await getSupabase().from(table).update(payload).eq('id', params.sourceRow);
+  let { error } = await getSupabase().from(table).update(serializeDates(payload)).eq('id', params.sourceRow);
 
   // If a column is missing in the database schema (e.g. amounttype not in Postgres table),
   // dynamically strip the missing column and retry so saving never fails due to schema divergence.
@@ -450,7 +463,7 @@ export async function updateBookingFields(params: {
     const match = error.message.match(/Could not find the '([^']+)' column/);
     if (match && match[1] && match[1] in payload) {
       delete payload[match[1]];
-      const res = await getSupabase().from(table).update(payload).eq('id', params.sourceRow);
+      const res = await getSupabase().from(table).update(serializeDates(payload)).eq('id', params.sourceRow);
       error = res.error;
     } else {
       break;
@@ -518,7 +531,7 @@ export async function addExpense(params: {
     receiptmimetype = params.file.type || "application/octet-stream";
   }
 
-  const { error } = await getSupabase().from('expenses').insert({
+  const { error } = await getSupabase().from('expenses').insert(serializeDates({
     timestamp: new Date().toISOString(),
     username: params.username,
     name: params.name || '',
@@ -534,7 +547,7 @@ export async function addExpense(params: {
     receiptmimetype,
     cardused: params.cardUsed || '',
     expensedate: params.expenseDate || ''
-  });
+  }));
 
   if (error) throw new Error("Failed to save expense");
   return receipturl;
@@ -574,7 +587,7 @@ export async function updateExpense(params: {
   if (receiptmimetype) updatePayload.receiptmimetype = receiptmimetype;
 
   const targetId = params.sourceRow || (params as any).id;
-  const { error } = await getSupabase().from('expenses').update(updatePayload).eq('id', targetId);
+  const { error } = await getSupabase().from('expenses').update(serializeDates(updatePayload)).eq('id', targetId);
   if (error) {
     console.error("Failed to update expense in Supabase:", error);
     throw new Error(error.message || "Failed to update expense");
@@ -598,7 +611,7 @@ export async function addAdvance(params: {
   method: string;
   givenBy: string;
 }): Promise<void> {
-  const { error } = await getSupabase().from('advances').insert({
+  const { error } = await getSupabase().from('advances').insert(serializeDates({
     timestamp: new Date().toISOString(),
     username: params.username,
     name: params.name || '',
@@ -606,7 +619,7 @@ export async function addAdvance(params: {
     amount: params.amount,
     method: params.method || 'Cash',
     givenby: params.givenBy || ''
-  });
+  }));
   if (error) throw new Error("Failed to save advance");
 }
 
@@ -627,7 +640,7 @@ export async function addNoteReminder(params: {
   const textEnc = await encryptField(params.text);
   const catEnc = await encryptField(params.category || "");
 
-  const { error } = await getSupabase().from('notes_reminders').insert({
+  const { error } = await getSupabase().from('notes_reminders').insert(serializeDates({
     timestamp: new Date().toISOString(),
     username: params.username,
     name: params.name || '',
@@ -637,7 +650,7 @@ export async function addNoteReminder(params: {
     category: catEnc,
     status: params.type === "reminder" ? "Pending" : "",
     duetime: params.duetime || ''
-  });
+  }));
   if (error) throw new Error("Failed to save note/reminder");
 }
 
@@ -712,7 +725,7 @@ export async function addAllowance(params: {
     }
   }
 
-  const { error } = await getSupabase().from('allowances').insert({
+  const { error } = await getSupabase().from('allowances').insert(serializeDates({
     timestamp: ts,
     username: params.username,
     name: params.name || '',
@@ -720,7 +733,7 @@ export async function addAllowance(params: {
     amount: params.amount,
     method: params.method || 'Cash',
     setby: params.setBy || ''
-  });
+  }));
   if (error) throw new Error("Failed to save allowance");
 }
 

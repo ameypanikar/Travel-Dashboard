@@ -219,6 +219,9 @@ export function AddBookingButton({
 
       if (!res.ok) {
         const t = await res.text();
+        if (res.status === 401) {
+          throw new Error("SYSTEM UPDATE REQUIRED: Your Gemini API token is outdated or invalid. Please check your settings.");
+        }
         throw new Error(`Gemini error ${res.status}: ${t}`);
       }
 
@@ -724,9 +727,28 @@ export function AddBookingButton({
             )}
 
             {error && (
-              <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
-                {error}
-              </div>
+              error.includes("SYSTEM UPDATE REQUIRED") ? (
+                <div className="rounded-xl border border-destructive/20 bg-destructive/5 py-3 overflow-hidden flex whitespace-nowrap relative w-full">
+                  <style>{`
+                    @keyframes marquee-rtl {
+                      0% { transform: translateX(100%); }
+                      100% { transform: translateX(-100%); }
+                    }
+                    .animate-marquee-local {
+                      animation: marquee-rtl 15s linear infinite;
+                      will-change: transform;
+                    }
+                  `}</style>
+                  <div className="animate-marquee-local text-xs font-semibold text-destructive tracking-wide w-full flex-shrink-0 flex gap-8">
+                    <span>🚀 {error}</span>
+                    <span>🚀 {error}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
+                  {error}
+                </div>
+              )
             )}
 
             {/* Smart Multi-Leg Fare Allocation Banner */}
