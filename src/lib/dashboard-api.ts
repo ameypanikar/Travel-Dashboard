@@ -124,6 +124,20 @@ export type Allowance = {
 };
 export type PendingItem = (Flight | Hotel) & { isPending: true };
 
+export type StandingTourBatch = {
+  id: string;
+  trip: string;
+  title: string;
+  fromDate: string;
+  toDate: string;
+  status: "open" | "completed";
+  completedAt?: string;
+  completedBy?: string;
+  createdAt: string;
+  createdBy: string;
+  notes?: string;
+};
+
 export type DashboardData = {
   ok: boolean;
   flights: Flight[];
@@ -139,6 +153,7 @@ export type DashboardData = {
   allowances: Allowance[];
   notesReminders: NoteReminder[];
   users: any[];
+  batches?: StandingTourBatch[];
   error?: string;
 };
 
@@ -155,7 +170,8 @@ export async function fetchDashboard(): Promise<DashboardData> {
       { data: allowancesData },
       { data: notesData },
       { data: docsData },
-      { data: usersData }
+      { data: usersData },
+      { data: batchesConfig }
     ] = await Promise.all([
       getSupabase().from('flights').select('*'),
       getSupabase().from('hotels').select('*'),
@@ -167,10 +183,27 @@ export async function fetchDashboard(): Promise<DashboardData> {
       getSupabase().from('allowances').select('*'),
       getSupabase().from('notes_reminders').select('*'),
       getSupabase().from('documents').select('*'),
-      getSupabase().from('users').select('*')
+      getSupabase().from('users').select('*'),
+      getSupabase().from('config').select('value').eq('key', 'standing_tour_batches').maybeSingle()
     ]);
 
     const mapSourceRow = (items: any[] | null) => (items || []).map(item => ({ ...item, sourcerow: item.id }));
+
+    let batchesList: StandingTourBatch[] = [];
+    if (batchesConfig?.value) {
+      try {
+        const parsed = JSON.parse(batchesConfig.value);
+        if (Array.isArray(parsed)) batchesList = parsed;
+      } catch {}
+    } else if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("standing_tour_batches");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) batchesList = parsed;
+        }
+      } catch {}
+    }
 
     const result: DashboardData = {
       ok: true,
@@ -190,6 +223,7 @@ export async function fetchDashboard(): Promise<DashboardData> {
       notesReminders: mapSourceRow(notesData) as any,
       documents: mapSourceRow(docsData) as any,
       users: mapSourceRow(usersData) as any,
+      batches: batchesList,
       updatedAt: new Date().toISOString()
     };
 
@@ -266,6 +300,116 @@ export async function saveGeminiKey(newKey: string): Promise<void> {
 
 export function getCachedGeminiKey(): string {
   return localStorage.getItem(GEMINI_CACHE_KEY) || "";
+}
+
+const COMPANY_CARDS_STORAGE_KEY = "company_cards";
+export const DEFAULT_COMPANY_CARDS = [
+  "XXXX XXXX XXXX 6002",
+  "XXXX XXXX XXXX 0948",
+  "XXXX XXXX XXXX 2001",
+  "XXXX XXXX XXXX 7019",
+  "XXXX XXXX XXXX 1688",
+];
+
+export async function fetchCompanyCards(): Promise<string[]> {
+  try {
+    const { data, error } = await getSupabase().from('config').select('value').eq('key', 'company_cards').maybeSingle();
+    if (!error && data?.value) {
+      const parsed = JSON.parse(data.value);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        if (typeof window !== "undefined") {
+          localStorage.setItem(COMPANY_CARDS_STORAGE_KEY, data.value);
+        }
+        return parsed;
+      }
+    }
+  } catch {
+    // Ignore network errors and fallback
+  }
+  return getCachedCompanyCards();
+}
+
+export async function saveCompanyCards(cards: string[]): Promise<void> {
+  const json = JSON.stringify(cards);
+  const { error } = await getSupabase().from('config').upsert({ key: 'company_cards', value: json });
+  if (error) throw new Error("Could not save company cards to database");
+  if (typeof window !== "undefined") {
+    localStorage.setItem(COMPANY_CARDS_STORAGE_KEY, json);
+  }
+}
+
+export function getCachedCompanyCards(): string[] {
+  if (typeof window === "undefined") return DEFAULT_COMPANY_CARDS;
+  const cached = localStorage.getItem(COMPANY_CARDS_STORAGE_KEY);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {
+      // fallback
+    }
+  }
+  return DEFAULT_COMPANY_CARDS;
+}
+
+export const STANDING_TOUR_BATCHES_KEY = "standing_tour_batches";
+
+export async function fetchStandingTourBatches(): Promise<StandingTourBatch[]> {
+  try {
+    const { data, error } = await getSupabase().from('config').select('value').eq('key', STANDING_TOUR_BATCHES_KEY).maybeSingle();
+    if (!error && data?.value) {
+      const parsed = JSON.parse(data.value);
+      if (Array.isArray(parsed)) {
+        if (typeof window !== "undefined") {
+          localStorage.setItem(STANDING_TOUR_BATCHES_KEY, data.value);
+        }
+        return parsed;
+      }
+    }
+  } catch {}
+  if (typeof window !== "undefined") {
+    const cached = localStorage.getItem(STANDING_TOUR_BATCHES_KEY);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+  }
+  return [];
+}
+
+export async function saveStandingTourBatches(batches: StandingTourBatch[]): Promise<void> {
+  const json = JSON.stringify(batches);
+  const { error } = await getSupabase().from('config').upsert({ key: STANDING_TOUR_BATCHES_KEY, value: json });
+  if (error) throw new Error("Could not save batches to database: " + error.message);
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STANDING_TOUR_BATCHES_KEY, json);
+  }
+}
+
+export async function createStandingTourBatch(batchData: Omit<StandingTourBatch, "id" | "createdAt">): Promise<StandingTourBatch> {
+  const current = await fetchStandingTourBatches();
+  const newBatch: StandingTourBatch = {
+    ...batchData,
+    id: `batch_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    createdAt: new Date().toISOString(),
+  };
+  const updated = [newBatch, ...current];
+  await saveStandingTourBatches(updated);
+  return newBatch;
+}
+
+export async function updateStandingTourBatch(id: string, updates: Partial<StandingTourBatch>): Promise<void> {
+  const current = await fetchStandingTourBatches();
+  const updated = current.map((b) => (b.id === id ? { ...b, ...updates } : b));
+  await saveStandingTourBatches(updated);
+}
+
+export async function deleteStandingTourBatch(id: string): Promise<void> {
+  const current = await fetchStandingTourBatches();
+  const updated = current.filter((b) => b.id !== id);
+  await saveStandingTourBatches(updated);
 }
 
 export async function updateEventStatus(params: { sourceRow: number; status: string }) {

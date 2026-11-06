@@ -31,6 +31,7 @@ dist-ssr
 *.sln
 *.sw?
 *.backup
+.agents/*
 
 # Sensitive database, spreadsheets, and data dumps
 *.xlsx

@@ -76,7 +76,7 @@ type Props = {
 
 export function Tabs({ value, onChange }: Props) {
   return (
-    <div className="mb-4 grid grid-cols-4 gap-2 sm:grid-cols-8">
+    <div className="mb-3 sm:mb-4 grid grid-cols-4 gap-1.5 sm:gap-2 sm:grid-cols-8">
       {TABS.map((t) => {
         const Icon = t.icon;
         const active = value === t.key;
@@ -84,7 +84,7 @@ export function Tabs({ value, onChange }: Props) {
           <button
             key={t.key}
             onClick={() => onChange(t.key)}
-            className="relative flex flex-col items-center justify-center gap-1.5 rounded-2xl px-1 py-3 text-[11px] font-bold transition-all duration-200"
+            className="relative flex flex-col items-center justify-center gap-1.5 rounded-2xl px-1 py-2.5 sm:py-3 text-[11px] font-bold transition-all duration-200 cursor-pointer active:scale-95"
             style={
               active
                 ? {

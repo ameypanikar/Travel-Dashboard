@@ -1,10 +1,10 @@
-import { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect, useMemo } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Loader2, Paperclip, Lock, ShieldCheck } from "lucide-react";
-import { updateExpense, fetchFxRate } from "@/lib/dashboard-api";
+import { updateExpense, fetchFxRate, fetchCompanyCards, getCachedCompanyCards } from "@/lib/dashboard-api";
 import type { Expense, TravelEvent } from "@/lib/dashboard-api";
 import type { SessionUser } from "@/lib/auth";
-import { CATEGORIES, PAYMENT_METHODS, CARDS, BANKS, GENERAL_TRAVEL, parseAmount, toIsoDate, formatInr, sortTripOptions, isActiveTrip } from "@/lib/expense-utils";
+import { CATEGORIES, getAvailableCategories, VISA_CHARGES, PAYMENT_METHODS, CARDS, BANKS, GENERAL_TRAVEL, parseAmount, toIsoDate, formatInr, sortTripOptions, isActiveTrip } from "@/lib/expense-utils";
 import { autoCropReceipt } from "@/lib/receipt-crop";
 
 export function EditExpenseDialog({
@@ -32,7 +32,7 @@ export function EditExpenseDialog({
   const isRestricted = restricted && !isOwnExpense && !isManagerOrAccounts;
 
   const [expenseDate, setExpenseDate] = useState(() => {
-    if (expense.expensedate) return expense.expensedate;
+    if (expense.expensedate) return toIsoDate(expense.expensedate) || expense.expensedate;
     if (expense.timestamp) {
       const d = new Date(expense.timestamp);
       if (!Number.isNaN(d.getTime())) return d.toISOString().split("T")[0];
@@ -45,8 +45,13 @@ export function EditExpenseDialog({
   const [trip, setTrip] = useState(expense.trip || GENERAL_TRAVEL);
   const [description, setDescription] = useState(expense.description || "");
   const [paymentMethod, setPaymentMethod] = useState(expense.paymentmethod || PAYMENT_METHODS[0]);
-  const [cardUsed, setCardUsed] = useState(expense.cardused || CARDS[0]);
+  const [cardsList, setCardsList] = useState<string[]>(() => getCachedCompanyCards());
+  const [cardUsed, setCardUsed] = useState(expense.cardused || cardsList[0] || CARDS[0]);
   const [bankUsed, setBankUsed] = useState(expense.cardused || BANKS[0]);
+
+  useEffect(() => {
+    fetchCompanyCards().then(setCardsList).catch(() => {});
+  }, []);
   const [fxRate, setFxRate] = useState(expense.fxrate || "");
   const [inrEquivalent, setInrEquivalent] = useState(expense.inrequivalent || "");
   const [resolving, setResolving] = useState(false);
@@ -55,6 +60,14 @@ export function EditExpenseDialog({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const availableCategories = useMemo(() => {
+    const list = getAvailableCategories(user?.role);
+    if (expense.category === VISA_CHARGES && !list.includes(VISA_CHARGES)) {
+      return [...list, VISA_CHARGES];
+    }
+    return list;
+  }, [user?.role, expense.category]);
 
   const tripOptions = sortTripOptions(
     Array.from(new Set([GENERAL_TRAVEL, ...events.filter(e => isActiveTrip(e)).map((e) => (e.eventname || "").trim()).filter(Boolean), expense.trip])),
@@ -77,6 +90,24 @@ export function EditExpenseDialog({
     }
   };
 
+  const handleFxRateChange = (val: string) => {
+    setFxRate(val);
+    const fxNum = parseFloat(val);
+    const amtNum = parseAmount(amount);
+    if (!Number.isNaN(fxNum) && !Number.isNaN(amtNum) && amtNum > 0) {
+      setInrEquivalent((amtNum * fxNum).toFixed(2));
+    }
+  };
+
+  const handleInrEquivalentChange = (val: string) => {
+    setInrEquivalent(val);
+    const inrNum = parseAmount(val);
+    const amtNum = parseAmount(amount);
+    if (!Number.isNaN(inrNum) && !Number.isNaN(amtNum) && amtNum > 0) {
+      setFxRate((inrNum / amtNum).toFixed(4));
+    }
+  };
+
   const handleCurrencyChange = (newCurrency: string) => {
     const upper = newCurrency.toUpperCase();
     setCurrency(upper);
@@ -93,7 +124,7 @@ export function EditExpenseDialog({
     setResolving(true);
     setError("");
     try {
-      const iso = expenseDate || new Date().toISOString().split("T")[0];
+      const iso = toIsoDate(expenseDate) || expenseDate || new Date().toISOString().split("T")[0];
       const fx = await fetchFxRate(iso, cur);
       if (!fx) {
         setError("Couldn't resolve a rate — enter it manually below.");
@@ -106,16 +137,6 @@ export function EditExpenseDialog({
       setResolving(false);
     }
   };
-
-  useEffect(() => {
-    const cur = currency.trim().toUpperCase();
-    if (cur && cur !== "INR" && amount) {
-      const timer = setTimeout(() => {
-        handleResolveFx();
-      }, 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [currency, amount, expenseDate]);
 
   const handleFileSelected = async (file: File | null) => {
     if (!file) {
@@ -233,7 +254,7 @@ export function EditExpenseDialog({
             <div>
               <label className="mb-1 block font-semibold text-muted-foreground">Category</label>
               <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full rounded border bg-background px-2 py-1.5">
-                {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                {availableCategories.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div>
@@ -248,7 +269,7 @@ export function EditExpenseDialog({
             <div>
               <label className="mb-1 block font-semibold text-muted-foreground">Card used</label>
               <select value={cardUsed} onChange={(e) => setCardUsed(e.target.value)} className="w-full rounded border bg-background px-2 py-1.5">
-                {CARDS.map((c) => <option key={c} value={c}>{c}</option>)}
+                {cardsList.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
           )}
@@ -286,11 +307,21 @@ export function EditExpenseDialog({
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="mb-1 block text-[10px] text-muted-foreground">FX rate</label>
-                  <input value={fxRate} onChange={(e) => setFxRate(e.target.value)} className="w-full rounded border bg-background px-2 py-1.5" />
+                  <input
+                    value={fxRate}
+                    onChange={(e) => handleFxRateChange(e.target.value)}
+                    placeholder="e.g. 11.8143"
+                    className="w-full rounded border bg-background px-2 py-1.5"
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-[10px] text-muted-foreground">INR equivalent</label>
-                  <input value={inrEquivalent} onChange={(e) => setInrEquivalent(e.target.value)} className="w-full rounded border bg-background px-2 py-1.5" />
+                  <input
+                    value={inrEquivalent}
+                    onChange={(e) => handleInrEquivalentChange(e.target.value)}
+                    placeholder="e.g. 845.90"
+                    className="w-full rounded border bg-background px-2 py-1.5"
+                  />
                 </div>
               </div>
             </div>

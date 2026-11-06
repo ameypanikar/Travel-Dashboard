@@ -20,6 +20,7 @@ import { SpendTabContent } from "@/components/dashboard/SpendTabContent";
 import { clearSessionUser, getSessionUser, type SessionUser } from "@/lib/auth";
 import { useSwipe } from "@/hooks/use-swipe";
 import { TravelSearchDialog } from "@/components/dashboard/TravelSearchDialog";
+import { TravelCopilotSheet } from "@/components/dashboard/TravelCopilotSheet";
 import { filterByRole } from "@/lib/role-filter";
 
 export const Route = createFileRoute("/")({
@@ -35,6 +36,7 @@ function Index() {
   const [itineraryDate, setItineraryDate] = useState<Date | null>(null);
   const [selectedTrip, setSelectedTrip] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const swipeRef = useRef<HTMLDivElement>(null);
 
   // Matches the visual left-to-right tab order exactly; no wrapping
@@ -65,6 +67,15 @@ function Index() {
   useEffect(() => {
     setUser(getSessionUser());
     setAuthReady(true);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.altKey && e.key.toLowerCase() === "c") || (e.ctrlKey && e.key.toLowerCase() === "j")) {
+        e.preventDefault();
+        setCopilotOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   const { data, isLoading, isFetching, error, refetch, dataUpdatedAt } = useQuery({
@@ -137,6 +148,7 @@ function Index() {
           events={data?.events ?? []}
           onTabChange={(t) => setTab(t as TabKey)}
           onSearch={() => setSearchOpen(true)}
+          onOpenCopilot={() => setCopilotOpen(true)}
         />
 
         <Tabs
@@ -147,40 +159,23 @@ function Index() {
             goToTab(next, nxtIdx >= curIdx ? "left" : "right");
           }}
         />
-        {/* Tab position dots — visible on mobile only */}
-        <div className="mb-3 flex justify-center gap-1.5 sm:hidden">
-          {TAB_ORDER.map((t) => (
-            <div
-              key={t}
-              className="rounded-full transition-all duration-300"
-              style={{
-                width: t === tab ? "16px" : "5px",
-                height: "5px",
-                background: t === tab
-                  ? "var(--color-accent)"
-                  : "var(--color-muted-foreground)",
-                opacity: t === tab ? 1 : 0.35,
-              }}
-            />
-          ))}
-        </div>
 
         {(tab === "flights" || tab === "hotels" || tab === "trains" || tab === "buses" || tab === "day") && (
-          <div className="mb-3 flex flex-col sm:flex-row gap-2">
+          <div className={`mb-3 grid ${tab !== "day" ? "grid-cols-2" : "grid-cols-1"} sm:flex sm:flex-row gap-2`}>
             <DateFilterBar 
               mode={tab === "day" ? "single" : "range"}
               singleValue={itineraryDate}
               rangeValue={listDateRange}
               onSingleChange={setItineraryDate}
               onRangeChange={setListDateRange}
-              className="flex-1"
+              className="flex-1 min-w-0"
             />
             {tab !== "day" && (
               <TripFilterBar 
                 value={selectedTrip} 
                 onChange={setSelectedTrip} 
                 trips={availableTrips} 
-                className="flex-1"
+                className="flex-1 min-w-0"
               />
             )}
           </div>
@@ -251,6 +246,21 @@ function Index() {
             events={data?.events ?? []}
             notesReminders={data?.notesReminders ?? []}
             onRefresh={() => refetch()}
+            flights={data?.flights ?? []}
+            hotels={data?.hotels ?? []}
+            trains={data?.trains ?? []}
+            buses={data?.buses ?? []}
+            expenses={data?.expenses ?? []}
+            advances={data?.advances ?? []}
+            allowances={data?.allowances ?? []}
+            users={data?.users ?? []}
+            onNavigateToSpend={(tripName: string) => {
+              const curIdx = TAB_ORDER.indexOf(tab);
+              const nxtIdx = TAB_ORDER.indexOf("spend");
+              goToTab("spend", nxtIdx >= curIdx ? "left" : "right");
+              setSelectedTrip(tripName);
+              setListDateRange(null);
+            }}
           />
         )}
 
@@ -306,7 +316,9 @@ function Index() {
                 expenses={data.expenses ?? []}
                 advances={data.advances ?? []}
                 allowances={data.allowances ?? []}
+                batches={data.batches ?? []}
                 onRefresh={() => refetch()}
+                initialTrip={selectedTrip}
               />
             )}
             {tab === "day" && (
@@ -366,6 +378,14 @@ function Index() {
           setSelectedTrip(trip);
           setListDateRange(null);
         }}
+      />
+      <TravelCopilotSheet
+        isOpen={copilotOpen}
+        onClose={() => setCopilotOpen(false)}
+        flights={filterByRole(data?.flights ?? []) as any}
+        hotels={filterByRole(data?.hotels ?? []) as any}
+        events={filterByRole(data?.events ?? []) as any}
+        username={user?.name || user?.username}
       />
     </div>
   );

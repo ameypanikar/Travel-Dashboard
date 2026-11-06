@@ -12,7 +12,7 @@ export type Train = Record<string, string>;
 
 function parseDateTime(date: string, time: string): Date | null {
   if (!date || !time) return null;
-  const dp = date.split("/");
+  const dp = (date.includes('-') ? date.split('-').reverse() : date.split('/'));
   if (dp.length !== 3) return null;
   const [dd, mm, yyyy] = dp;
   const [hh, mn] = time.split(":");

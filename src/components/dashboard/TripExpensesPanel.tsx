@@ -1,26 +1,18 @@
-import { useMemo, useState } from "react";
-import { ChevronDown, Loader2, Receipt as ReceiptIcon, FileDown, CheckCircle2, Trash2 } from "lucide-react";
-import type { Flight, Hotel, Train, Bus, TravelEvent, Expense, Advance, Allowance } from "@/lib/dashboard-api";
-import { addAdvance, addAllowance, removeAllowance, updateEventStatus } from "@/lib/dashboard-api";
+import { useMemo, useState, useEffect } from "react";
+import { ChevronDown, Loader2, Receipt as ReceiptIcon, FileDown, CheckCircle2, Trash2, Pencil } from "lucide-react";
+import type { Flight, Hotel, Train, Bus, TravelEvent, Expense, Advance, Allowance, StandingTourBatch } from "@/lib/dashboard-api";
+import { addAdvance, addAllowance, removeAllowance, removeExpense, updateEventStatus } from "@/lib/dashboard-api";
 import type { SessionUser } from "@/lib/auth";
-import { formatInr, parseAmount, GENERAL_TRAVEL, getTripParticipants, sumBookingInrMulti, sumExpensesByCategoryMulti, sumExpensesByPaymentMethodMulti, sumAdvancesMulti, sortTripOptions, isActiveTrip } from "@/lib/expense-utils";
+import { formatInr, parseAmount, GENERAL_TRAVEL, getTripParticipants, sumBookingInrMulti, sumExpensesByCategoryMulti, sumExpensesByPaymentMethodMulti, sumAdvancesMulti, sortTripOptions, isActiveTrip, isOwnerEntry, isTripMatch, normalizeTripName, formatIsoToDisplay, shiftIsoDate, toIsoDate } from "@/lib/expense-utils";
 import { ReceiptViewerDialog } from "./ReceiptViewerDialog";
 import { ConsolidatedReceiptsView } from "./ConsolidatedReceiptsView";
 import { TravelVoucherView } from "./TravelVoucherView";
+import { StandingTourBatchesPanel } from "./StandingTourBatchesPanel";
+import { EditExpenseDialog } from "./EditExpenseDialog";
 import { toast } from "sonner";
 import { isPersonMatch } from "@/lib/role-filter";
 
 type UserEntry = { name: string; username: string; role: string };
-
-// Name/role match used to split the owner out of the combined trip voucher.
-// Prefers role === "Owner" on the user record; falls back to a name match
-// in case role tagging is inconsistent for some users.
-const OWNER_USERNAME = "rajesh k";
-function isOwnerEntry(username: string, name: string | undefined, users: UserEntry[]) {
-  if (username.trim().toLowerCase() === OWNER_USERNAME) return true;
-  const n = (name || "").trim().toLowerCase();
-  return n === "rajesh kulkarni" || n === "rajesh k";
-}
 
 export function TripExpensesPanel({
   flights,
@@ -33,7 +25,9 @@ export function TripExpensesPanel({
   allowances,
   users,
   user,
+  batches = [],
   onRefresh,
+  initialTrip,
 }: {
   flights: Flight[];
   hotels: Hotel[];
@@ -45,28 +39,59 @@ export function TripExpensesPanel({
   allowances: Allowance[];
   users: UserEntry[];
   user: SessionUser;
+  batches?: StandingTourBatch[];
   onRefresh: () => void;
+  initialTrip?: string | null;
 }) {
-  const [selectedTrip, setSelectedTrip] = useState("");
+  const [selectedTrip, setSelectedTrip] = useState(initialTrip || "");
+  const [showAllTrips, setShowAllTrips] = useState(false);
 
-  const tripOptions = useMemo(
-    () =>
-      sortTripOptions(
-        Array.from(
-          new Set([
-            ...events.filter(e => isActiveTrip(e)).map((e) => (e.eventname || "").trim()).filter(Boolean),
-            ...expenses.map((e) => (e.trip || GENERAL_TRAVEL).trim()),
-            ...advances.map((a) => (a.trip || GENERAL_TRAVEL).trim()),
-            GENERAL_TRAVEL,
-            ...(selectedTrip ? [selectedTrip] : []),
-          ]),
-        ),
-        events
-      ),
-    [events, expenses, advances, selectedTrip],
-  );
+  useEffect(() => {
+    if (initialTrip) setSelectedTrip(initialTrip);
+  }, [initialTrip]);
+
+  const completedTripSet = useMemo(() => {
+    return new Set(
+      events
+        .filter((e) => e.status === "Completed")
+        .map((e) => (e.eventname || "").trim().toLowerCase())
+    );
+  }, [events]);
+
+  const tripOptions = useMemo(() => {
+    const rawSet = new Set<string>();
+    rawSet.add(GENERAL_TRAVEL);
+
+    events
+      .filter((e) => (showAllTrips ? true : isActiveTrip(e)))
+      .map((e) => (e.eventname || "").trim())
+      .filter(Boolean)
+      .forEach((t) => rawSet.add(t));
+
+    expenses.forEach((e) => {
+      const t = (e.trip || GENERAL_TRAVEL).trim();
+      if (t) rawSet.add(t);
+    });
+
+    advances.forEach((a) => {
+      const t = (a.trip || GENERAL_TRAVEL).trim();
+      if (t) rawSet.add(t);
+    });
+
+    if (selectedTrip) rawSet.add(selectedTrip);
+
+    // Filter out completed/covered trips unless showAllTrips is checked or it is currently selected
+    const filtered = Array.from(rawSet).filter((t) => {
+      if (showAllTrips) return true;
+      if (selectedTrip && isTripMatch(t, selectedTrip)) return true;
+      return !completedTripSet.has(t.toLowerCase());
+    });
+
+    return sortTripOptions(filtered, events, expenses);
+  }, [events, expenses, advances, selectedTrip, showAllTrips, completedTripSet]);
   const [expandedPerson, setExpandedPerson] = useState<string | null>(null);
   const [viewingReceipt, setViewingReceipt] = useState<string | null>(null);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [showConsolidated, setShowConsolidated] = useState(false);
   // Which voucher is currently open: the combined staff voucher, the
   // separate owner (Rajesh) voucher, or none.
@@ -91,8 +116,8 @@ export function TripExpensesPanel({
   const [allowanceMethod, setAllowanceMethod] = useState("Cash");
 
   const isStandingTour = useMemo(() => {
-    return events.some(
-      (e) => (e.eventname || "").trim().toLowerCase() === selectedTrip.trim().toLowerCase() && e.type === "Standing Tour",
+    return selectedTrip === GENERAL_TRAVEL || events.some(
+      (e) => isTripMatch(e.eventname, selectedTrip) && (e.type?.includes("Standing") || e.type === "Standing Tour"),
     );
   }, [events, selectedTrip]);
 
@@ -133,7 +158,7 @@ export function TripExpensesPanel({
   const voucherData = useMemo(() => {
     if (!selectedTrip) return null;
     const toIso = (ddmmyyyy: string): string => {
-      const p = ddmmyyyy.trim().split("/");
+      const p = (ddmmyyyy.trim().includes('-') ? ddmmyyyy.trim().split('-').reverse() : ddmmyyyy.trim().split('/'));
       if (p.length !== 3) return "";
       const [dd, mm, yyyy] = p;
       return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
@@ -227,7 +252,7 @@ export function TripExpensesPanel({
   const tripReceipts = useMemo(() => {
     if (!selectedTrip) return [];
     return (voucherData?.filteredExpenses ?? [])
-      .filter((e) => (e.trip || GENERAL_TRAVEL).trim() === selectedTrip && e.receipturl)
+      .filter((e) => isTripMatch(e.trip || GENERAL_TRAVEL, selectedTrip) && e.receipturl)
       .map((e) => ({
         url: e.receipturl,
         mimetype: e.receiptmimetype || "",
@@ -238,7 +263,7 @@ export function TripExpensesPanel({
   const expensesForPerson = (username: string, name: string) =>
     (voucherData?.filteredExpenses ?? [])
       .filter((e) => {
-        if ((e.trip || GENERAL_TRAVEL).trim() !== selectedTrip) return false;
+        if (!isTripMatch(e.trip || GENERAL_TRAVEL, selectedTrip)) return false;
         const eu = (e.username || e.name || "").trim().toLowerCase();
         return (
           eu === username.trim().toLowerCase() ||
@@ -255,7 +280,7 @@ export function TripExpensesPanel({
 
   const advancesForPerson = (username: string, name: string) =>
     (voucherData?.filteredAdvances ?? advances).filter((a) => {
-      if ((a.trip || GENERAL_TRAVEL).trim() !== selectedTrip) return false;
+      if (!isTripMatch(a.trip || GENERAL_TRAVEL, selectedTrip)) return false;
       const au = (a.username || a.name || "").trim().toLowerCase();
       return (
         au === username.trim().toLowerCase() ||
@@ -267,7 +292,7 @@ export function TripExpensesPanel({
 
   const allowancesForPerson = (username: string, name: string) =>
     (voucherData?.filteredAllowances ?? allowances).filter((a) => {
-      if ((a.trip || GENERAL_TRAVEL).trim() !== selectedTrip) return false;
+      if (!isTripMatch(a.trip || GENERAL_TRAVEL, selectedTrip)) return false;
       const au = (a.username || a.name || "").trim().toLowerCase();
       return (
         au === username.trim().toLowerCase() ||
@@ -332,21 +357,147 @@ export function TripExpensesPanel({
     }
   };
 
-  const handleCompleteTrip = async () => {
-    const ev = events.find((e) => (e.eventname || "").trim() === selectedTrip);
-    if (!ev || !ev.sourcerow) {
+  const selectedEvent = useMemo(() => {
+    if (!selectedTrip) return null;
+    return (
+      events.find((e) => isTripMatch(e.eventname, selectedTrip)) ||
+      events.find((e) => normalizeTripName(e.eventname) === normalizeTripName(selectedTrip)) ||
+      events.find((e) => {
+        const ne = normalizeTripName(e.eventname);
+        const nt = normalizeTripName(selectedTrip);
+        return ne && nt && (ne.includes(nt) || nt.includes(ne));
+      }) ||
+      null
+    );
+  }, [events, selectedTrip]);
+
+  // Pre-populates voucher departure and arrival dates from active date filter, event dates, or item bounds
+  const voucherDates = useMemo(() => {
+    let dep = voucherDateFrom ? formatIsoToDisplay(voucherDateFrom) : "";
+    let arr = voucherDateTo ? formatIsoToDisplay(voucherDateTo) : "";
+
+    // If no date range filter was set, fetch from the trip event
+    if (!dep && selectedEvent?.startdate) {
+      dep = formatIsoToDisplay(toIsoDate(selectedEvent.startdate)) || selectedEvent.startdate;
+    }
+    if (!arr && (selectedEvent?.enddate || selectedEvent?.startdate)) {
+      const eDate = selectedEvent.enddate || selectedEvent.startdate;
+      arr = formatIsoToDisplay(toIsoDate(eDate)) || eDate;
+    }
+
+    // Fallback to min/max dates across bookings & expenses if still missing
+    if ((!dep || !arr) && voucherData) {
+      const dates: string[] = [];
+      voucherData.filteredFlights.forEach((f) => {
+        const d = toIsoDate((f as any).departuredate || (f as any).departureDate);
+        if (d) dates.push(d);
+      });
+      voucherData.filteredTrains.forEach((t) => {
+        const d = toIsoDate((t as any).departuredate || (t as any).date);
+        if (d) dates.push(d);
+      });
+      voucherData.filteredBuses.forEach((b) => {
+        const d = toIsoDate((b as any).departuredate || (b as any).date);
+        if (d) dates.push(d);
+      });
+      voucherData.filteredHotels.forEach((h) => {
+        const ci = toIsoDate((h as any).checkindate || (h as any).checkInDate);
+        const co = toIsoDate((h as any).checkoutdate || (h as any).checkOutDate);
+        if (ci) dates.push(ci);
+        if (co) dates.push(co);
+      });
+      voucherData.filteredExpenses.forEach((e) => {
+        let iso = "";
+        if (e.expensedate && e.expensedate.trim()) {
+          iso = toIsoDate(e.expensedate.trim()) || e.expensedate.trim().slice(0, 10);
+        } else if (e.timestamp) {
+          const d = new Date(e.timestamp);
+          if (!Number.isNaN(d.getTime())) iso = d.toISOString().slice(0, 10);
+        }
+        if (iso) dates.push(iso);
+      });
+      if (dates.length > 0) {
+        dates.sort();
+        if (!dep) dep = formatIsoToDisplay(dates[0]);
+        if (!arr) arr = formatIsoToDisplay(dates[dates.length - 1]);
+      }
+    }
+
+    return {
+      departureDate: dep || "",
+      arrivalDate: arr || dep || "",
+    };
+  }, [voucherDateFrom, voucherDateTo, selectedEvent, voucherData]);
+
+  const eventRow = Number(selectedEvent?.sourcerow || (selectedEvent as any)?.id || (selectedEvent as any)?.sourceRow || 0);
+  const isSelectedTripCompleted = selectedEvent?.status === "Completed";
+  const tourSettledThrough = isStandingTour && selectedEvent?.status?.startsWith("Covered: ")
+    ? selectedEvent.status.replace("Covered: ", "").trim()
+    : null;
+
+  const pendingAfterSettlementCount = useMemo(() => {
+    if (!isStandingTour || !tourSettledThrough) return 0;
+    return expenses.filter((e) => {
+      if (!isTripMatch(e.trip, selectedTrip)) return false;
+      let iso = "";
+      if (e.expensedate && e.expensedate.trim()) {
+        iso = e.expensedate.trim().slice(0, 10);
+      } else if (e.timestamp) {
+        const d = new Date(e.timestamp);
+        if (!Number.isNaN(d.getTime())) iso = d.toISOString().slice(0, 10);
+      }
+      return iso > tourSettledThrough;
+    }).length;
+  }, [isStandingTour, tourSettledThrough, expenses, selectedTrip]);
+
+  const handleMarkTourSettledThrough = async () => {
+    if (!eventRow || !voucherDateTo) {
+      if (!voucherDateTo) toast.error("Please pick a 'To date' for the settlement cutoff.");
+      else toast.error("Could not find event record in database to update.");
+      return;
+    }
+    if (!window.confirm(`Mark "${selectedTrip}" as covered through ${formatIsoToDisplay(voucherDateTo)}?`)) return;
+    try {
+      await updateEventStatus({ sourceRow: eventRow, status: `Covered: ${voucherDateTo}` });
+      toast.success(`Marked covered through ${formatIsoToDisplay(voucherDateTo)}!`);
+      onRefresh();
+    } catch (e) {
+      toast.error("Failed to update status: " + (e as Error).message);
+    }
+  };
+
+  const handleResetTourSettlement = async () => {
+    if (!eventRow) {
+      toast.error("Could not find event record in database to reset.");
+      return;
+    }
+    if (!window.confirm(`Reset settlement milestone for "${selectedTrip}"?`)) return;
+    try {
+      await updateEventStatus({ sourceRow: eventRow, status: "Booked" });
+      toast.success("Settlement milestone reset.");
+      onRefresh();
+    } catch (e) {
+      toast.error("Failed to reset status: " + (e as Error).message);
+    }
+  };
+
+  const handleToggleTripComplete = async () => {
+    if (!eventRow) {
       toast.error("Could not find event details.");
       return;
     }
-    if (!window.confirm("Are you sure you want to complete this trip? It will no longer be visible in the trip selection lists.")) return;
-    
+    const nextStatus = isSelectedTripCompleted ? "Booked" : "Completed";
+    const promptMsg = isSelectedTripCompleted
+      ? "Re-open this trip? It will appear in active trip dropdowns again."
+      : "Mark this trip as completed / covered?";
+    if (!window.confirm(promptMsg)) return;
+
     try {
-      await updateEventStatus({ sourceRow: ev.sourcerow, status: "Completed" });
-      toast.success("Trip marked as completed!");
-      setSelectedTrip("");
+      await updateEventStatus({ sourceRow: eventRow, status: nextStatus });
+      toast.success(isSelectedTripCompleted ? "Trip re-opened!" : "Trip marked as covered!");
       onRefresh();
     } catch (e) {
-      toast.error("Failed to complete trip: " + (e as Error).message);
+      toast.error("Failed to update trip status: " + (e as Error).message);
     }
   };
 
@@ -354,65 +505,98 @@ export function TripExpensesPanel({
     <div className="rounded-2xl bg-card p-4 shadow-card">
       <div className="mb-3 text-sm font-bold">Trip expenses</div>
 
-      <div className="flex gap-2 mb-3">
-        <select
-          value={selectedTrip}
-          onChange={(e) => { setSelectedTrip(e.target.value); setExpandedPerson(null); setVoucherDateFrom(""); setVoucherDateTo(""); }}
-          className="flex-1 rounded border bg-background px-2 py-1.5 text-xs"
-        >
-          <option value="">Select a trip…</option>
-          {tripOptions.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        
-        {selectedTrip && selectedTrip !== GENERAL_TRAVEL && (
-          <button
-            onClick={handleCompleteTrip}
-            className="flex shrink-0 items-center gap-1 rounded bg-muted px-3 py-1.5 text-xs font-semibold hover:bg-accent-soft"
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+        <div className="flex flex-1 gap-2">
+          <select
+            value={selectedTrip}
+            onChange={(e) => {
+              const nextTrip = e.target.value;
+              setSelectedTrip(nextTrip);
+              setExpandedPerson(null);
+              const ev = events.find((x) => isTripMatch(x.eventname, nextTrip));
+              const settled = ev?.status?.startsWith("Covered: ") ? ev.status.replace("Covered: ", "").trim() : null;
+              setVoucherDateFrom(settled ? shiftIsoDate(settled, 1) : "");
+              setVoucherDateTo("");
+            }}
+            className="flex-1 rounded border bg-background px-2 py-1.5 text-xs"
           >
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent" />
-            Mark Complete
-          </button>
-        )}
+            <option value="">Select a trip…</option>
+            {tripOptions.map((t) => {
+              const ev = events.find((e) => isTripMatch(e.eventname, t));
+              const isComp = ev?.status === "Completed";
+              return (
+                <option key={t} value={t}>
+                  {t}{showAllTrips && isComp ? " (Covered)" : ""}
+                </option>
+              );
+            })}
+          </select>
+          
+          {selectedTrip && selectedTrip !== GENERAL_TRAVEL && !events.find((e) => isTripMatch(e.eventname, selectedTrip))?.type?.includes("Standing") && (
+            <button
+              onClick={handleToggleTripComplete}
+              className={`flex shrink-0 items-center gap-1 rounded px-3 py-1.5 text-xs font-semibold transition ${
+                isSelectedTripCompleted
+                  ? "bg-muted text-muted-foreground hover:bg-muted/80"
+                  : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/25"
+              }`}
+            >
+              <CheckCircle2 className={`h-3.5 w-3.5 ${isSelectedTripCompleted ? "text-muted-foreground" : "text-emerald-600 dark:text-emerald-400"}`} />
+              {isSelectedTripCompleted ? "Re-open Trip" : "Mark Covered"}
+            </button>
+          )}
+        </div>
+
+        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={showAllTrips}
+            onChange={(e) => setShowAllTrips(e.target.checked)}
+            className="rounded border-border text-accent focus:ring-accent h-3.5 w-3.5"
+          />
+          <span>Show all / archived (&gt; 3 mos)</span>
+        </label>
       </div>
 
       {selectedTrip && (
         <>
-          {/* Trip-wide actions — one consolidated receipts view, and two
-              vouchers: the combined voucher for everyone except the owner,
-              and a separate voucher for the owner (Rajesh Kulkarni). */}
+          {/* Trip-wide actions — available for all trips */}
           <div className="mt-3 flex flex-wrap gap-2">
             <button
+              type="button"
               onClick={() => setShowConsolidated(true)}
               disabled={tripReceipts.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10 disabled:opacity-40 cursor-pointer"
             >
               <ReceiptIcon className="h-3.5 w-3.5" /> Consolidated receipts ({tripReceipts.length})
             </button>
             <button
+              type="button"
               onClick={() => setVoucherGroup("staff")}
               disabled={staffParticipants.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10 disabled:opacity-40 cursor-pointer"
             >
               <FileDown className="h-3.5 w-3.5" /> Create Travel Voucher ({staffParticipants.length})
             </button>
             <button
+              type="button"
               onClick={() => setVoucherGroup("owner")}
               disabled={ownerParticipants.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/10 disabled:opacity-40 cursor-pointer"
             >
               <FileDown className="h-3.5 w-3.5" /> Owner Voucher — Rajesh ({ownerParticipants.length})
             </button>
           </div>
-          {/* Date range to narrow the voucher, expenses, and allowances to one specific visit of a recurring
-              event (e.g. Standing Tour like BEL Customer Visit). */}
-          <div className="mt-2 flex flex-col gap-1.5 rounded-lg border border-dashed border-border px-3 py-2">
+
+          {/* Date Filter — available for all trips, essential for inspecting visit date ranges on standing tours */}
+          <div className="mt-3 flex flex-col gap-2 rounded-xl border border-dashed border-border bg-slate-50/60 dark:bg-muted/30 px-3 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  {isStandingTour ? "Standing Tour Visit Filter" : "Date filter (optional)"}
+                  Date filter {isStandingTour ? "— check visit dates & employee uploads" : "(optional)"}
                 </span>
                 {isStandingTour && (
-                  <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold text-accent">
+                  <span className="rounded bg-accent-soft px-1.5 py-0.5 text-[9px] font-semibold text-accent">
                     Standing Tour
                   </span>
                 )}
@@ -423,40 +607,108 @@ export function TripExpensesPanel({
                 </span>
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <input
-                type="date"
-                value={voucherDateFrom}
-                onChange={(e) => {
-                  setVoucherDateFrom(e.target.value);
-                  if (e.target.value) setAllowanceDate(e.target.value);
-                }}
-                className="rounded border bg-background px-2 py-1 text-[11px]"
-                title="From date"
-              />
-              <span className="text-[11px] text-muted-foreground">→</span>
-              <input
-                type="date"
-                value={voucherDateTo}
-                onChange={(e) => setVoucherDateTo(e.target.value)}
-                className="rounded border bg-background px-2 py-1 text-[11px]"
-                title="To date"
-              />
-              {(voucherDateFrom || voucherDateTo) && (
-                <button
-                  onClick={() => { setVoucherDateFrom(""); setVoucherDateTo(""); }}
-                  className="rounded px-1.5 py-1 text-[11px] text-muted-foreground hover:text-destructive"
-                >
-                  Clear
-                </button>
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <input
+                  type="date"
+                  value={voucherDateFrom}
+                  onChange={(e) => {
+                    setVoucherDateFrom(e.target.value);
+                    if (e.target.value) setAllowanceDate(e.target.value);
+                  }}
+                  className="rounded border bg-background px-2 py-1 text-[11px]"
+                  title="From date"
+                />
+                <span className="text-[11px] text-muted-foreground">→</span>
+                <input
+                  type="date"
+                  value={voucherDateTo}
+                  onChange={(e) => setVoucherDateTo(e.target.value)}
+                  className="rounded border bg-background px-2 py-1 text-[11px]"
+                  title="To date"
+                />
+                {(voucherDateFrom || voucherDateTo) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoucherDateFrom("");
+                      setVoucherDateTo("");
+                    }}
+                    className="rounded px-1.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-destructive cursor-pointer"
+                  >
+                    Clear filter
+                  </button>
+                )}
+              </div>
+              {isStandingTour && !voucherDateFrom && !voucherDateTo && (
+                <div className="text-[10px] text-muted-foreground">
+                  Enter visit dates above to check expenses, verify employee uploads, and filter vouchers.
+                </div>
+              )}
+              {isStandingTour && (voucherDateFrom || voucherDateTo) && (
+                <div className="text-[10px] font-medium text-muted-foreground">
+                  Viewing: {voucherDateFrom ? formatIsoToDisplay(voucherDateFrom) : "Start"} → {voucherDateTo ? formatIsoToDisplay(voucherDateTo) : "Present"}
+                </div>
               )}
             </div>
-            {isStandingTour && !voucherDateFrom && !voucherDateTo && (
-              <div className="text-[10px] text-muted-foreground">
-                Tip: This is a standing tour spanning multiple visits. Enter visit dates above to filter expenses, allowances, and travel vouchers for a specific visit.
-              </div>
-            )}
           </div>
+
+          {/* Standing Tour Visit Settlement Batches */}
+          {isStandingTour && (
+            <StandingTourBatchesPanel
+              trip={selectedTrip}
+              batches={batches}
+              expenses={expenses}
+              advances={advances}
+              allowances={allowances}
+              flights={flights}
+              hotels={hotels}
+              trains={trains}
+              buses={buses}
+              users={users}
+              user={user}
+              onRefresh={onRefresh}
+              activeDateFrom={voucherDateFrom}
+              activeDateTo={voucherDateTo}
+              onClearDateRange={() => {
+                setVoucherDateFrom("");
+                setVoucherDateTo("");
+                toast.info("Cleared filter; viewing full tour");
+              }}
+              onSelectBatchDateRange={(from, to) => {
+                if (voucherDateFrom === from && voucherDateTo === to) {
+                  setVoucherDateFrom("");
+                  setVoucherDateTo("");
+                  toast.info("Reset filter to full tour");
+                } else {
+                  setVoucherDateFrom(from);
+                  setVoucherDateTo(to);
+                  toast.info(`Filtered panel to ${formatIsoToDisplay(from)} – ${formatIsoToDisplay(to)}`);
+                }
+              }}
+              onOpenVoucher={(t, grp, dateRange) => {
+                if (dateRange) {
+                  setVoucherDateFrom(dateRange.from);
+                  setVoucherDateTo(dateRange.to);
+                } else {
+                  setVoucherDateFrom("");
+                  setVoucherDateTo("");
+                }
+                setVoucherGroup(grp);
+              }}
+              onOpenReceipts={(t, dateRange) => {
+                if (dateRange) {
+                  setVoucherDateFrom(dateRange.from);
+                  setVoucherDateTo(dateRange.to);
+                } else {
+                  setVoucherDateFrom("");
+                  setVoucherDateTo("");
+                }
+                setShowConsolidated(true);
+              }}
+            />
+          )}
 
           {/* Standalone advance logger — works for anyone, expense or not. */}
           <div className="mt-4 rounded-lg border p-3">
@@ -575,17 +827,53 @@ export function TripExpensesPanel({
                         ) : (
                           <div className="space-y-1.5">
                             {personExpenses.map((e) => (
-                              <div key={e.sourcerow} className="flex items-center justify-between gap-2 text-[11px]">
-                                <span className="text-muted-foreground">
+                              <div
+                                key={e.sourcerow}
+                                className="group flex items-center justify-between gap-2 rounded-lg px-2 py-1 text-[11px] transition hover:bg-muted/40"
+                              >
+                                <span
+                                  className="truncate text-muted-foreground"
+                                  title={`${e.category}${e.description ? ` · ${e.description}` : ""} · ${e.paymentmethod || "Cash"}`}
+                                >
                                   {e.category}{e.description ? ` · ${e.description}` : ""} · {e.paymentmethod || "Cash"}
                                 </span>
-                                <span className="flex items-center gap-1.5">
+                                <span className="flex shrink-0 items-center gap-1.5">
                                   {e.receipturl && (
-                                    <button onClick={() => setViewingReceipt(e.receipturl)} className="text-accent">
-                                      <ReceiptIcon className="h-3 w-3" />
+                                    <button
+                                      type="button"
+                                      onClick={() => setViewingReceipt(e.receipturl)}
+                                      className="rounded p-0.5 text-accent transition hover:text-accent/80 cursor-pointer"
+                                      title="View Receipt"
+                                    >
+                                      <ReceiptIcon className="h-3.5 w-3.5" />
                                     </button>
                                   )}
-                                  <span className="font-semibold">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingExpense(e)}
+                                    className="rounded p-0.5 text-muted-foreground transition hover:text-accent hover:bg-accent-soft cursor-pointer"
+                                    title="Edit Expense / Bill"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (!window.confirm(`Delete expense "${e.category}${e.description ? ` (${e.description})` : ""} - ${e.amount} ${e.currency || "INR"}"?`)) return;
+                                      try {
+                                        await removeExpense({ sourceRow: e.sourcerow, username: user.username });
+                                        toast.success("Expense deleted");
+                                        onRefresh();
+                                      } catch (err) {
+                                        toast.error((err as Error).message);
+                                      }
+                                    }}
+                                    className="rounded p-0.5 text-muted-foreground transition hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                                    title="Delete Expense"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                  <span className="min-w-[55px] text-right font-semibold">
                                     {(e.currency || "INR").toUpperCase() === "INR" ? formatInr(parseAmount(e.amount) || 0) : `${e.amount} ${e.currency}`}
                                   </span>
                                 </span>
@@ -666,7 +954,16 @@ export function TripExpensesPanel({
       )}
 
       {showConsolidated && selectedTrip && (
-        <ConsolidatedReceiptsView trip={selectedTrip} receipts={tripReceipts} onClose={() => setShowConsolidated(false)} />
+        <ConsolidatedReceiptsView
+          trip={selectedTrip}
+          receipts={tripReceipts}
+          dateRangeSubtitle={
+            voucherDateFrom || voucherDateTo
+              ? `${voucherDateFrom ? formatIsoToDisplay(voucherDateFrom) : "Start"} – ${voucherDateTo ? formatIsoToDisplay(voucherDateTo) : "Present"}`
+              : undefined
+          }
+          onClose={() => setShowConsolidated(false)}
+        />
       )}
 
       {voucherGroup && selectedTrip && voucherData && (
@@ -680,7 +977,23 @@ export function TripExpensesPanel({
           expenses={voucherData.filteredExpenses}
           advances={voucherData.filteredAdvances}
           allowances={voucherData.filteredAllowances}
+          defaultDepartureDate={voucherDates.departureDate}
+          defaultArrivalDate={voucherDates.arrivalDate}
           onClose={() => setVoucherGroup(null)}
+        />
+      )}
+
+      {editingExpense && (
+        <EditExpenseDialog
+          expense={editingExpense}
+          user={user}
+          events={events}
+          onClose={() => setEditingExpense(null)}
+          onSaved={() => {
+            setEditingExpense(null);
+            onRefresh();
+          }}
+          restricted={false}
         />
       )}
     </div>

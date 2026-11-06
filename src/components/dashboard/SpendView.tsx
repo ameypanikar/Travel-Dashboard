@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import type { Flight, Hotel, Train, TravelEvent, Expense } from "@/lib/dashboard-api";
+import type { Flight, Hotel, Train, TravelEvent, Expense, Allowance } from "@/lib/dashboard-api";
 import {
   parseAmount,
   formatInr,
@@ -24,7 +24,7 @@ import { Plane, Hotel as HotelIcon, TrainFront, Bus as BusIcon, Receipt, AlertTr
 import { EmptyState } from "./EmptyState";
 
 type SpendRecord = {
-  type: "flight" | "hotel" | "train" | "bus" | "expense";
+  type: "flight" | "hotel" | "train" | "bus" | "expense" | "allowance";
   dateDdMmYyyy: string;
   category?: string;
   paymentMethod: string;
@@ -43,6 +43,7 @@ const TYPE_COLORS: Record<string, string> = {
   train: "#10B981",
   bus: "#EC4899",
   expense: "#8B5CF6",
+  allowance: "#14B8A6",
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -51,6 +52,7 @@ const TYPE_LABELS: Record<string, string> = {
   train: "Trains",
   bus: "Buses",
   expense: "Expenses",
+  allowance: "Allowances",
 };
 
 const UNSPECIFIED_METHOD = "Unspecified";
@@ -134,6 +136,44 @@ function toExpenseRecord(e: Expense, users: { name: string; username: string }[]
 }
 
 
+function toAllowanceRecord(a: Allowance, users: { name: string; username: string }[] = []): SpendRecord | null {
+  if (!a.amount) return null;
+  const amountNum = parseAmount(a.amount);
+  if (Number.isNaN(amountNum) || amountNum <= 0) return null;
+
+  let dateDdMmYyyy = "";
+  if (a.date && a.date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    const parts = a.date.split("-");
+    dateDdMmYyyy = `${parts[2]}/${parts[1]}/${parts[0]}`;
+  } else if (a.timestamp) {
+    const d = new Date(a.timestamp);
+    if (!Number.isNaN(d.getTime())) {
+      dateDdMmYyyy = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+    }
+  }
+
+  const canonicalUser = canonicalizePersonName(a.username || a.name || "", users);
+  const assignedTo = [canonicalUser || a.username || a.name || "Unknown"].filter(Boolean);
+  const trip = (a.trip || "General Travel").trim() || "General Travel";
+  const paymentMethod = (a.method || "").trim() || "Cash";
+  const description = `Daily Allowance${a.setby ? ` · By ${a.setby}` : ""}`;
+
+  return {
+    type: "allowance",
+    category: "Allowance",
+    paymentMethod,
+    dateDdMmYyyy,
+    description,
+    assignedTo,
+    trip,
+    currency: "INR",
+    originalAmount: a.amount,
+    amountInr: amountNum,
+    unresolved: false,
+  };
+}
+
+
 export function SpendView({
   flights,
   hotels,
@@ -141,6 +181,7 @@ export function SpendView({
   buses = [],
   events = [],
   expenses = [],
+  allowances = [],
   canSeeAll = true,
   users = [],
 }: {
@@ -150,6 +191,7 @@ export function SpendView({
   buses?: Train[];
   events?: TravelEvent[];
   expenses?: Expense[];
+  allowances?: Allowance[];
   // Full-access roles (System Manager/Owner/HR/Accounts) get the employee
   // breakdown and employee filter. Regular users are always viewing just
   // their own (already-scoped) data, so that panel/filter is hidden — a
@@ -170,6 +212,7 @@ export function SpendView({
   const [paymentMethodFocus, setPaymentMethodFocus] = useState<string>("all");
   const [employeeChartMode, setEmployeeChartMode] = useState<"bar" | "pie">("bar");
   const [tripChartMode, setTripChartMode] = useState<"bar" | "pie">("bar");
+  const [showAllowances, setShowAllowances] = useState(false);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const tableRef = useRef<HTMLDivElement>(null);
 
@@ -199,8 +242,15 @@ export function SpendView({
       const rec = toExpenseRecord(e, users);
       if (rec) out.push(rec);
     }
+    // Allowances are only visible to legacy users and when explicitly toggled on ("when required")
+    if (canSeeAll && showAllowances && allowances) {
+      for (const a of allowances) {
+        const rec = toAllowanceRecord(a, users);
+        if (rec) out.push(rec);
+      }
+    }
     return out;
-  }, [flights, hotels, trains, buses, expenses]);
+  }, [flights, hotels, trains, buses, expenses, allowances, canSeeAll, showAllowances, users]);
 
   const employeeOptions = useMemo(
     () => Array.from(new Set(allRecords.flatMap((r) => r.assignedTo))).sort(),
@@ -232,7 +282,7 @@ export function SpendView({
   }, [allRecords, dateFrom, dateTo, employee, trip, typeFocus, categoryFocus, paymentMethodFocus, canSeeAll]);
 
   const totals = useMemo(() => {
-    const byType = { flight: 0, hotel: 0, train: 0, bus: 0, expense: 0 };
+    const byType = { flight: 0, hotel: 0, train: 0, bus: 0, expense: 0, allowance: 0 };
     let grand = 0;
     let unresolvedCount = 0;
     for (const r of filtered) {
@@ -286,9 +336,10 @@ export function SpendView({
         .map(([name, value], i) => ({ key: name, name, value, color: PALETTE[i % PALETTE.length] }));
     }
     return (Object.keys(TYPE_LABELS) as SpendRecord["type"][])
+      .filter((t) => (canSeeAll && showAllowances) || t !== "allowance")
       .map((t) => ({ key: t, name: TYPE_LABELS[t], value: totals.byType[t], color: TYPE_COLORS[t] }))
       .filter((d) => d.value > 0);
-  }, [filtered, totals, isExpenseOnlyView]);
+  }, [filtered, totals, isExpenseOnlyView, canSeeAll, showAllowances]);
 
   const pieTitle = isExpenseOnlyView ? "Personal expenses by category" : "Split by type — click a slice to drill in";
 
@@ -320,7 +371,8 @@ export function SpendView({
 
   const hasActiveFilters = !!(
     dateFrom || dateTo || (canSeeAll && employee !== "all") || trip !== "all" ||
-    typeFocus !== "all" || categoryFocus !== "all" || paymentMethodFocus !== "all"
+    typeFocus !== "all" || categoryFocus !== "all" || paymentMethodFocus !== "all" ||
+    showAllowances
   );
   const clearAll = () => {
     const d = new Date();
@@ -329,6 +381,7 @@ export function SpendView({
     setDateFrom(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
     setEmployee("all"); setTrip("all");
     setTypeFocus("all"); setCategoryFocus("all"); setPaymentMethodFocus("all");
+    setShowAllowances(false);
   };
   const jumpToTable = () => tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -382,6 +435,7 @@ export function SpendView({
     { key: "train", label: "Trains", icon: TrainFront, value: totals.byType.train },
     { key: "bus", label: "Buses", icon: BusIcon, value: totals.byType.bus },
     { key: "expense", label: "Expenses", icon: Receipt, value: totals.byType.expense },
+    ...(canSeeAll && showAllowances ? [{ key: "allowance" as const, label: "Allowances", icon: Wallet, value: totals.byType.allowance }] : []),
   ];
 
   const maxPaymentAmount = Math.max(1, ...byPaymentMethod.map((d) => d.amount));
@@ -414,6 +468,42 @@ export function SpendView({
             {tripOptions.map((name) => <option key={name} value={name}>{name}</option>)}
           </select>
         </div>
+        {canSeeAll && (
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Allowances</label>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAllowances((prev) => {
+                  const next = !prev;
+                  if (!next && typeFocus === "allowance") {
+                    setTypeFocus("all");
+                  }
+                  return next;
+                });
+              }}
+              className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                showAllowances
+                  ? "border-teal-500/50 bg-teal-500/10 text-teal-400 shadow-sm"
+                  : "border-border bg-background text-muted-foreground hover:bg-accent-soft hover:text-foreground"
+              }`}
+            >
+              <Wallet className="h-3.5 w-3.5 text-teal-400" />
+              <span>Include Allowances</span>
+              <span
+                className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                  showAllowances ? "bg-teal-500" : "bg-muted-foreground/30"
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                    showAllowances ? "translate-x-3.5" : "translate-x-0.5"
+                  }`}
+                />
+              </span>
+            </button>
+          </div>
+        )}
         {hasActiveFilters && (
           <button onClick={clearAll} className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-accent-soft">
             Clear filters
@@ -451,24 +541,25 @@ export function SpendView({
       ) : (
         <>
           {/* Summary cards — click to drill into that category */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className={`grid grid-cols-2 gap-3 sm:grid-cols-3 ${canSeeAll && showAllowances ? "md:grid-cols-4 xl:grid-cols-7" : "lg:grid-cols-6"}`}>
             {cardTypes.map((c, idx) => {
               const Icon = c.icon;
               const active = typeFocus === c.key;
               const colors: Record<string, { from: string; to: string; shadow: string }> = {
-                all:     { from: "oklch(0.46 0.19 264)", to: "oklch(0.52 0.20 240)", shadow: "oklch(0.46 0.19 264 / 35%)" },
-                flight:  { from: "oklch(0.46 0.21 264)", to: "oklch(0.52 0.20 240)", shadow: "oklch(0.46 0.21 264 / 35%)" },
-                hotel:   { from: "oklch(0.52 0.18 30)",  to: "oklch(0.62 0.20 50)",  shadow: "oklch(0.52 0.18 30 / 35%)" },
-                train:   { from: "oklch(0.48 0.16 155)", to: "oklch(0.54 0.18 170)", shadow: "oklch(0.48 0.16 155 / 35%)" },
-                bus:     { from: "oklch(0.58 0.17 65)",  to: "oklch(0.66 0.18 80)",  shadow: "oklch(0.58 0.17 65 / 35%)" },
-                expense: { from: "oklch(0.48 0.18 300)", to: "oklch(0.56 0.20 315)", shadow: "oklch(0.48 0.18 300 / 35%)" },
+                all:       { from: "oklch(0.46 0.19 264)", to: "oklch(0.52 0.20 240)", shadow: "oklch(0.46 0.19 264 / 35%)" },
+                flight:    { from: "oklch(0.46 0.21 264)", to: "oklch(0.52 0.20 240)", shadow: "oklch(0.46 0.21 264 / 35%)" },
+                hotel:     { from: "oklch(0.52 0.18 30)",  to: "oklch(0.62 0.20 50)",  shadow: "oklch(0.52 0.18 30 / 35%)" },
+                train:     { from: "oklch(0.48 0.16 155)", to: "oklch(0.54 0.18 170)", shadow: "oklch(0.48 0.16 155 / 35%)" },
+                bus:       { from: "oklch(0.58 0.17 65)",  to: "oklch(0.66 0.18 80)",  shadow: "oklch(0.58 0.17 65 / 35%)" },
+                expense:   { from: "oklch(0.48 0.18 300)", to: "oklch(0.56 0.20 315)", shadow: "oklch(0.48 0.18 300 / 35%)" },
+                allowance: { from: "oklch(0.50 0.17 175)", to: "oklch(0.58 0.18 190)", shadow: "oklch(0.50 0.17 175 / 35%)" },
               };
               const col = colors[c.key] ?? colors.all;
               return (
                 <button
                   key={c.key}
                   onClick={() => handleCardClick(c.key)}
-                  className={`animate-fade-in-up rounded-2xl p-4 text-left shadow-card transition-all duration-200 ${ 
+                  className={`animate-fade-in-up rounded-2xl p-3 sm:p-3.5 text-left shadow-card transition-all duration-200 ${ 
                     active ? "ring-2" : "card-hover"
                   }`}
                   style={{
@@ -490,7 +581,7 @@ export function SpendView({
                     </span>
                     {c.label}
                   </div>
-                  <div className={`mt-1.5 text-xl font-bold truncate ${active ? "text-white" : "text-foreground"}`} title={formatInr(c.value)}>
+                  <div className={`mt-1.5 text-lg sm:text-xl font-bold truncate ${active ? "text-white" : "text-foreground"}`} title={formatInr(c.value)}>
                     {formatInrAbbreviated(c.value)}
                   </div>
                 </button>

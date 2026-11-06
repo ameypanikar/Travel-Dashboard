@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { EventsList } from "./EventsList";
 import { NotesRemindersView } from "./NotesRemindersView";
-import type { TravelEvent, NoteReminder } from "@/lib/dashboard-api";
+import type { TravelEvent, NoteReminder, Flight, Hotel, Train, Bus, Expense, Advance, Allowance } from "@/lib/dashboard-api";
 import type { SessionUser } from "@/lib/auth";
 
 export function EventsTabContent({
@@ -9,11 +9,29 @@ export function EventsTabContent({
   events,
   notesReminders,
   onRefresh,
+  flights = [],
+  hotels = [],
+  trains = [],
+  buses = [],
+  expenses = [],
+  advances = [],
+  allowances = [],
+  users = [],
+  onNavigateToSpend,
 }: {
   user: SessionUser;
   events: TravelEvent[];
   notesReminders: NoteReminder[];
   onRefresh: () => void;
+  flights?: Flight[];
+  hotels?: Hotel[];
+  trains?: Train[];
+  buses?: Bus[];
+  expenses?: Expense[];
+  advances?: Advance[];
+  allowances?: Allowance[];
+  users?: { name: string; username: string; role: string }[];
+  onNavigateToSpend?: (trip: string) => void;
 }) {
   const [view, setView] = useState<"dashboard" | "notes">("dashboard");
 
@@ -39,7 +57,20 @@ export function EventsTabContent({
       </div>
 
       {view === "dashboard" ? (
-        <EventsList events={events} onRefresh={onRefresh} />
+        <EventsList
+          events={events}
+          onRefresh={onRefresh}
+          user={user}
+          flights={flights}
+          hotels={hotels}
+          trains={trains}
+          buses={buses}
+          expenses={expenses}
+          advances={advances}
+          allowances={allowances}
+          users={users}
+          onNavigateToSpend={onNavigateToSpend}
+        />
       ) : (
         <NotesRemindersView user={user} items={notesReminders} onRefresh={onRefresh} />
       )}

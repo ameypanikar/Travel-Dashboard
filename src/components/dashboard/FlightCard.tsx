@@ -15,7 +15,7 @@ import { Radio } from "lucide-react";
 
 function parseDateTime(date: string, time: string): Date | null {
   if (!date || !time) return null;
-  const dp = date.split("/");
+  const dp = (date.includes('-') ? date.split('-').reverse() : date.split('/'));
   if (dp.length !== 3) return null;
   const [dd, mm, yyyy] = dp;
   const [hh, mn] = time.split(":");
@@ -120,7 +120,7 @@ const namesMatch = (a: string, b: string) =>
 // Parses a DD/MM/YYYY string (the format used throughout this app for dates) into a Date.
 function parseDdMmYyyy(dateStr?: string): Date | null {
   if (!dateStr) return null;
-  const parts = dateStr.split("/");
+  const parts = (dateStr.includes('-') ? dateStr.split('-').reverse() : dateStr.split('/'));
   if (parts.length !== 3) return null;
   const [dd, mm, yyyy] = parts.map((p) => parseInt(p, 10));
   if (!dd || !mm || !yyyy) return null;

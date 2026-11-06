@@ -11,6 +11,10 @@ import {
   Clock,
   Plane,
   Sparkles,
+  PenLine,
+  Trash2,
+  PlusCircle,
+  ArrowLeft,
 } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { toast } from "sonner";
@@ -23,7 +27,7 @@ import {
   addBooking,
 } from "@/lib/dashboard-api";
 import type { TravelEvent } from "@/lib/dashboard-api";
-import { getSessionToken } from "@/lib/auth";
+import { getSessionToken, getSessionUser, type SessionUser } from "@/lib/auth";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { triggerConfetti } from "@/lib/confetti";
 import { formatInr, GENERAL_TRAVEL, isActiveTrip, sortTripOptions } from "@/lib/expense-utils";
@@ -40,7 +44,7 @@ function normalizeToIso(dateStr?: string): string {
   if (!dateStr) return "";
   const trimmed = dateStr.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  const parts = trimmed.split("/");
+  const parts = (trimmed.includes('-') ? trimmed.split('-').reverse() : trimmed.split('/'));
   if (parts.length === 3) {
     const [dd, mm, yyyy] = parts;
     if (yyyy.length === 4) return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
@@ -94,19 +98,112 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+function getFieldLabel(key: string, kind: Kind): { label: string; placeholder: string; icon?: string } {
+  switch (key) {
+    case "airline":
+      return { label: "Airline Name", placeholder: "e.g. IndiGo, Air India, Emirates", icon: "✈️" };
+    case "flight_number":
+      return { label: "Flight Number", placeholder: "e.g. 6E 204, AI 102" };
+    case "from_code":
+      return {
+        label: kind === "train" ? "From Station Code" : "From Airport Code",
+        placeholder: kind === "train" ? "e.g. PUNE, NDLS" : "e.g. BOM, DEL, DXB",
+      };
+    case "city_from":
+      return { label: "Origin City", placeholder: "e.g. Mumbai, Pune, Delhi" };
+    case "to_code":
+      return {
+        label: kind === "train" ? "To Station Code" : "To Airport Code",
+        placeholder: kind === "train" ? "e.g. CSMT, BCT" : "e.g. DEL, BLR, LHR",
+      };
+    case "city_to":
+      return { label: "Destination City", placeholder: "e.g. Delhi, Bangalore, London" };
+    case "departure_date":
+      return { label: "Departure Date", placeholder: "DD/MM/YYYY" };
+    case "departure_time":
+      return { label: "Departure Time", placeholder: "HH:MM (24-hr, e.g. 14:30)" };
+    case "arrival_date":
+      return { label: "Arrival Date", placeholder: "DD/MM/YYYY" };
+    case "arrival_time":
+      return { label: "Arrival Time", placeholder: "HH:MM (24-hr, e.g. 16:45)" };
+    case "confirmation_code":
+      return { label: kind === "flight" ? "PNR / Confirmation" : "Confirmation / Booking ID", placeholder: "e.g. W9Q7KL" };
+    case "duration":
+      return { label: "Duration", placeholder: "e.g. 02h 15m" };
+    case "manage_link":
+      return { label: "Check-in / Manage Link", placeholder: "https://..." };
+    case "assigned_to":
+      return { label: "Assigned Traveler(s)", placeholder: "Search or type traveler name", icon: "👤" };
+    case "amount":
+      return { label: "Fare Amount", placeholder: "e.g. 5400", icon: "💰" };
+    case "currency":
+      return { label: "Currency", placeholder: "INR, USD, EUR..." };
+    case "booking_date":
+      return { label: "Date of Booking", placeholder: "DD/MM/YYYY" };
+    case "payment_method":
+      return { label: "Payment Method", placeholder: "" };
+    case "trip":
+      return { label: "Trip Assignment", placeholder: "" };
+    case "fx_rate":
+      return { label: "Exchange Rate (FX)", placeholder: "e.g. 85.50 (if non-INR)" };
+    case "inr_equivalent":
+      return { label: "INR Equivalent", placeholder: "Calculated INR amount" };
+    case "hotel_name":
+      return { label: "Hotel Name", placeholder: "e.g. The Taj Mahal Palace", icon: "🏨" };
+    case "address":
+      return { label: "Hotel Address", placeholder: "Street address or landmark" };
+    case "city":
+      return { label: "City", placeholder: "e.g. Mumbai, New Delhi" };
+    case "checkin_date":
+      return { label: "Check-in Date", placeholder: "DD/MM/YYYY" };
+    case "checkout_date":
+      return { label: "Check-out Date", placeholder: "DD/MM/YYYY" };
+    case "booking_link":
+      return { label: "Booking Link", placeholder: "https://..." };
+    case "cancellation_deadline":
+      return { label: "Free Cancellation Deadline", placeholder: "DD/MM/YYYY (optional)" };
+    case "booked_price":
+      return { label: "Total Booked Price", placeholder: "e.g. 12000", icon: "💰" };
+    case "train_name":
+      return { label: "Train Name", placeholder: "e.g. Vande Bharat Express", icon: "🚂" };
+    case "train_number":
+      return { label: "Train Number", placeholder: "e.g. 22222" };
+    case "pnr":
+      return { label: "10-digit PNR", placeholder: "e.g. 8421098765" };
+    case "class":
+      return { label: "Travel Class", placeholder: "e.g. 2A, 3A, CC, EC, SL" };
+    case "bus_operator":
+      return { label: "Bus Operator Name", placeholder: "e.g. Neeta Tours, Zingbus", icon: "🚌" };
+    case "bus_number":
+      return { label: "Bus / Service Number", placeholder: "e.g. MH 12 AB 1234" };
+    case "from":
+      return { label: "Boarding Point", placeholder: "e.g. Swargate, Pune" };
+    case "to":
+      return { label: "Drop Point", placeholder: "e.g. Borivali, Mumbai" };
+    case "ticket_number":
+      return { label: "Ticket Number / Ref", placeholder: "e.g. TKT-987654" };
+    default:
+      return { label: key.replace(/_/g, " "), placeholder: "" };
+  }
+}
+
 export function AddBookingButton({
+  user: propUser,
   users = [],
   events = [],
   uberSuggestions = [],
   open: controlledOpen,
   onOpenChange,
+  onRefresh,
   hideTrigger = false,
 }: {
+  user?: SessionUser;
   users?: UserEntry[];
   events?: TravelEvent[];
   uberSuggestions?: { label: string; address: string }[];
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onRefresh?: () => void;
   hideTrigger?: boolean;
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
@@ -116,6 +213,11 @@ export function AddBookingButton({
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
+
+  const user = propUser || getSessionUser();
+  const userRole = (user?.role || "").trim().toLowerCase();
+  const canAddManually = ["accounts", "system manager", "owner"].includes(userRole);
+  const [entryMode, setEntryMode] = useState<"upload" | "manual">("upload");
 
   // Multi-leg records (supports 1, 2, 3, 4+ flight segments)
   const [records, setRecords] = useState<Record<string, string>[] | null>(null);
@@ -155,6 +257,7 @@ export function AddBookingButton({
       const detail = (e as CustomEvent).detail;
       if (detail && detail.file && detail.kind) {
         setKind(detail.kind);
+        setEntryMode("upload");
         setOpen(true);
         handleFile(detail.file, detail.kind);
       }
@@ -175,8 +278,96 @@ export function AddBookingButton({
     setExtractedCurrency("INR");
     setExtractedFxRate(null);
     setFareAllocationMode("first_leg");
+    setEntryMode("upload");
     if (inputRef.current) inputRef.current.value = "";
   }, []);
+
+  const initManualRecordForKind = useCallback(
+    (k: Kind) => {
+      if (k === "uber") return;
+      const bookableKind = k as BookableKind;
+      const keys = KEYS[bookableKind];
+      const newRecord: Record<string, string> = {};
+      for (const field of keys) {
+        if (CLIENT_COMPUTED_KEYS.has(field)) continue;
+        newRecord[field] = "";
+      }
+      const activeEv = events.find((e) => isActiveTrip(e));
+      newRecord.trip = activeEv ? (activeEv.eventname || "").trim() : GENERAL_TRAVEL;
+      newRecord.currency = "INR";
+      newRecord.payment_method = "";
+      newRecord.assigned_to = "";
+      newRecord.amount = "";
+      newRecord.fx_rate = "";
+      newRecord.inr_equivalent = "";
+
+      setRecords([newRecord]);
+      setActiveLeg(0);
+      setError("");
+      setStatus("");
+      setTotalExtractedFare(0);
+      setExtractedCurrency("INR");
+      setExtractedFxRate(null);
+      setFareAllocationMode("first_leg");
+    },
+    [events],
+  );
+
+  const handleStartManualEntry = useCallback(() => {
+    setEntryMode("manual");
+    initManualRecordForKind(kind);
+  }, [kind, initManualRecordForKind]);
+
+  const handleSwitchToUpload = useCallback(() => {
+    setEntryMode("upload");
+    reset();
+  }, [reset]);
+
+  const handleSelectKind = (k: Kind) => {
+    setKind(k);
+    if (k === "uber") {
+      reset();
+      return;
+    }
+    if (entryMode === "manual") {
+      initManualRecordForKind(k);
+    } else {
+      reset();
+    }
+  };
+
+  const handleAddFlightLeg = () => {
+    if (!records || kind !== "flight") return;
+    const newLeg: Record<string, string> = {};
+    for (const key of KEYS.flight) {
+      if (CLIENT_COMPUTED_KEYS.has(key)) continue;
+      newLeg[key] = "";
+    }
+    const prevLeg = records[records.length - 1];
+    newLeg.airline = prevLeg?.airline || "";
+    newLeg.confirmation_code = prevLeg?.confirmation_code || "";
+    newLeg.from_code = prevLeg?.to_code || "";
+    newLeg.city_from = prevLeg?.city_to || "";
+    newLeg.assigned_to = records[0]?.assigned_to || "";
+    newLeg.trip = records[0]?.trip || GENERAL_TRAVEL;
+    newLeg.currency = records[0]?.currency || "INR";
+    newLeg.payment_method = records[0]?.payment_method || "";
+    newLeg.amount = "";
+    newLeg.fx_rate = "";
+    newLeg.inr_equivalent = "";
+    const nextList = [...records, newLeg];
+    setRecords(nextList);
+    setActiveLeg(nextList.length - 1);
+  };
+
+  const handleRemoveFlightLeg = (indexToRemove: number) => {
+    if (!records || records.length <= 1) return;
+    const nextList = records.filter((_, i) => i !== indexToRemove);
+    setRecords(nextList);
+    if (activeLeg >= nextList.length) {
+      setActiveLeg(nextList.length - 1);
+    }
+  };
 
   const extractWithGemini = async (
     base64: string,
@@ -219,10 +410,10 @@ export function AddBookingButton({
 
       if (!res.ok) {
         const t = await res.text();
-        if (res.status === 401) {
-          throw new Error("SYSTEM UPDATE REQUIRED: Your Gemini API token is outdated or invalid. Please check your settings.");
+        if (res.status === 401 || res.status === 403) {
+          throw new Error("API Authentication failed. Please check your credentials or log in again.");
         }
-        throw new Error(`Gemini error ${res.status}: ${t}`);
+        throw new Error(`Failed to process document (Error ${res.status}). Please try again.`);
       }
 
       const json = await res.json();
@@ -423,10 +614,46 @@ export function AddBookingButton({
   const updateActiveRecord = (key: string, value: string) => {
     if (!records) return;
     const next = records.slice();
-    next[activeLeg] = { ...next[activeLeg], [key]: value };
-    if (key === "amount") {
+    const updated = { ...next[activeLeg], [key]: value };
+
+    if (key === "amount" || key === "booked_price") {
       setFareAllocationMode("custom");
+      const amtNum = parseAmount(value);
+      const cur = (updated.currency || "").trim().toUpperCase();
+      if (!Number.isNaN(amtNum)) {
+        if (cur === "INR") {
+          updated.inr_equivalent = String(amtNum);
+        } else if (updated.fx_rate) {
+          const fxNum = parseFloat(updated.fx_rate);
+          if (!Number.isNaN(fxNum)) {
+            updated.inr_equivalent = (amtNum * fxNum).toFixed(2);
+          }
+        }
+      }
+    } else if (key === "fx_rate") {
+      const fxNum = parseFloat(value);
+      const amtNum = parseAmount(updated.amount || updated.booked_price);
+      if (!Number.isNaN(fxNum) && !Number.isNaN(amtNum) && amtNum > 0) {
+        updated.inr_equivalent = (amtNum * fxNum).toFixed(2);
+      }
+    } else if (key === "inr_equivalent") {
+      const inrNum = parseAmount(value);
+      const amtNum = parseAmount(updated.amount || updated.booked_price);
+      if (!Number.isNaN(inrNum) && !Number.isNaN(amtNum) && amtNum > 0) {
+        updated.fx_rate = (inrNum / amtNum).toFixed(4);
+      }
+    } else if (key === "currency") {
+      const cur = value.trim().toUpperCase();
+      if (cur === "INR") {
+        updated.fx_rate = "";
+        const amtNum = parseAmount(updated.amount || updated.booked_price);
+        if (!Number.isNaN(amtNum)) {
+          updated.inr_equivalent = String(amtNum);
+        }
+      }
     }
+
+    next[activeLeg] = updated;
     setRecords(next);
   };
 
@@ -469,6 +696,34 @@ export function AddBookingButton({
 
   const onSave = async () => {
     if (!records || records.length === 0) return;
+
+    if (entryMode === "manual") {
+      if (kind === "flight") {
+        const first = records[0];
+        if (!first.airline?.trim() && !first.flight_number?.trim() && !first.from_code?.trim() && !first.city_from?.trim()) {
+          toast.error("Please enter at least an Airline Name, Flight Number, or Origin City.");
+          return;
+        }
+      } else if (kind === "hotel") {
+        const first = records[0];
+        if (!first.hotel_name?.trim()) {
+          toast.error("Please enter the Hotel Name.");
+          return;
+        }
+      } else if (kind === "train") {
+        const first = records[0];
+        if (!first.train_name?.trim() && !first.train_number?.trim() && !first.pnr?.trim()) {
+          toast.error("Please enter at least Train Name, Number, or PNR.");
+          return;
+        }
+      } else if (kind === "bus") {
+        const first = records[0];
+        if (!first.bus_operator?.trim() && !first.from?.trim() && !first.city_from?.trim()) {
+          toast.error("Please enter at least Bus Operator Name or Boarding City.");
+          return;
+        }
+      }
+    }
 
     const hasStandingTour = records.some((r) => {
       const matchingEvent = events.find((e) => e.eventname === r.trip);
@@ -532,6 +787,7 @@ export function AddBookingButton({
       setTimeout(() => triggerConfetti(), 150);
       reset();
       setOpen(false);
+      onRefresh?.();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -596,15 +852,12 @@ export function AddBookingButton({
               {(["flight", "hotel", "train"] as Kind[]).map((k) => (
                 <button
                   key={k}
-                  onClick={() => {
-                    setKind(k);
-                    reset();
-                  }}
+                  onClick={() => handleSelectKind(k)}
                   className={cn(
-                    "rounded-lg px-3 py-2 text-sm font-semibold transition",
+                    "rounded-lg px-3 py-2 text-sm font-semibold transition cursor-pointer",
                     kind === k
-                      ? "bg-accent text-accent-foreground"
-                      : "bg-card hover:bg-accent-soft",
+                      ? "bg-accent text-accent-foreground shadow-sm"
+                      : "bg-card hover:bg-accent-soft text-foreground",
                   )}
                 >
                   {k === "flight" ? "✈️ Flight" : k === "hotel" ? "🏨 Hotel" : "🚂 Train"}
@@ -613,67 +866,107 @@ export function AddBookingButton({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => {
-                  setKind("bus");
-                  reset();
-                }}
+                onClick={() => handleSelectKind("bus")}
                 className={cn(
-                  "rounded-lg px-3 py-2 text-sm font-semibold transition",
+                  "rounded-lg px-3 py-2 text-sm font-semibold transition cursor-pointer",
                   kind === "bus"
-                    ? "bg-accent text-accent-foreground"
-                    : "bg-card hover:bg-accent-soft",
+                    ? "bg-accent text-accent-foreground shadow-sm"
+                    : "bg-card hover:bg-accent-soft text-foreground",
                 )}
               >
                 🚌 Bus
               </button>
               <button
-                onClick={() => {
-                  setKind("uber");
-                  reset();
-                }}
+                onClick={() => handleSelectKind("uber")}
                 className={cn(
-                  "rounded-lg px-3 py-2 text-sm font-semibold transition",
+                  "rounded-lg px-3 py-2 text-sm font-semibold transition cursor-pointer",
                   kind === "uber"
-                    ? "bg-accent text-accent-foreground"
-                    : "bg-card hover:bg-accent-soft",
+                    ? "bg-accent text-accent-foreground shadow-sm"
+                    : "bg-card hover:bg-accent-soft text-foreground",
                 )}
               >
                 🚗 Uber
               </button>
             </div>
 
-            {/* Drop zone — hidden for Uber */}
-            {kind !== "uber" && (
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOver(true);
-                }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={onDrop}
-                onClick={() => inputRef.current?.click()}
-                className={cn(
-                  "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center text-sm transition",
-                  dragOver ? "border-accent bg-accent-soft" : "border-border hover:bg-muted/40",
-                )}
-              >
-                <Upload className="h-6 w-6 text-muted-foreground" />
-                <div className="font-semibold text-foreground">
-                  Drop your booking PDF or image here or click to browse
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  Supports multi-leg flights, layovers & round trips
-                </div>
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png,.webp"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleFile(f);
+            {/* Segmented Mode Selector for Accounts / System Manager */}
+            {canAddManually && kind !== "uber" && (
+              <div className="flex items-center gap-1 rounded-xl bg-muted/60 p-1 border border-border/60">
+                <button
+                  type="button"
+                  onClick={handleSwitchToUpload}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-bold transition cursor-pointer",
+                    entryMode === "upload"
+                      ? "bg-background text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  Upload Ticket (PDF / Image)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleStartManualEntry}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-bold transition cursor-pointer",
+                    entryMode === "manual"
+                      ? "bg-accent text-accent-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <PenLine className="h-3.5 w-3.5" />
+                  Manual Entry (No Ticket)
+                </button>
+              </div>
+            )}
+
+            {/* Drop zone — shown only in upload mode and when no records parsed yet */}
+            {kind !== "uber" && entryMode === "upload" && !records && (
+              <div className="space-y-2">
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOver(true);
                   }}
-                />
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={onDrop}
+                  onClick={() => inputRef.current?.click()}
+                  className={cn(
+                    "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center text-sm transition",
+                    dragOver ? "border-accent bg-accent-soft" : "border-border hover:bg-muted/40",
+                  )}
+                >
+                  <Upload className="h-6 w-6 text-muted-foreground" />
+                  <div className="font-semibold text-foreground">
+                    Drop your booking PDF or image here or click to browse
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Supports multi-leg flights, layovers & round trips
+                  </div>
+                  <input
+                    ref={inputRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleFile(f);
+                    }}
+                  />
+                </div>
+
+                {canAddManually && (
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={handleStartManualEntry}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent hover:underline cursor-pointer"
+                    >
+                      <PenLine className="h-3.5 w-3.5" /> Don't have a confirmation ticket? Enter details manually
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -727,28 +1020,9 @@ export function AddBookingButton({
             )}
 
             {error && (
-              error.includes("SYSTEM UPDATE REQUIRED") ? (
-                <div className="rounded-xl border border-destructive/20 bg-destructive/5 py-3 overflow-hidden flex whitespace-nowrap relative w-full">
-                  <style>{`
-                    @keyframes marquee-rtl {
-                      0% { transform: translateX(100%); }
-                      100% { transform: translateX(-100%); }
-                    }
-                    .animate-marquee-local {
-                      animation: marquee-rtl 15s linear infinite;
-                      will-change: transform;
-                    }
-                  `}</style>
-                  <div className="animate-marquee-local text-xs font-semibold text-destructive tracking-wide w-full flex-shrink-0 flex gap-8">
-                    <span>🚀 {error}</span>
-                    <span>🚀 {error}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
-                  {error}
-                </div>
-              )
+              <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
+                {error}
+              </div>
             )}
 
             {/* Smart Multi-Leg Fare Allocation Banner */}
@@ -810,30 +1084,60 @@ export function AddBookingButton({
                 <div className="border-b bg-muted/40 px-3 py-2.5">
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                      Preview & Edit Segments
+                      {entryMode === "manual"
+                        ? `Manual ${kind === "flight" ? "Flight" : kind === "hotel" ? "Hotel" : kind === "train" ? "Train" : "Bus"} Details`
+                        : "Preview & Edit Segments"}
                     </div>
+                    <button
+                      type="button"
+                      onClick={reset}
+                      className="text-[11px] font-semibold text-muted-foreground hover:text-foreground underline cursor-pointer"
+                    >
+                      Clear & Start Over
+                    </button>
                   </div>
 
-                  {records && records.length > 1 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {records.map((r, i) => (
+                  {kind === "flight" && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {records &&
+                        records.map((r, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => setActiveLeg(i)}
+                            className={cn(
+                              "inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition shadow-xs cursor-pointer",
+                              activeLeg === i
+                                ? "bg-accent text-accent-foreground shadow-sm"
+                                : "bg-background border border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+                            )}
+                          >
+                            <Plane className="h-3 w-3" />
+                            <span>
+                              Leg {i + 1}: {r.from_code || r.city_from || "?"} →{" "}
+                              {r.to_code || r.city_to || "?"}
+                            </span>
+                          </button>
+                        ))}
+                      <button
+                        type="button"
+                        onClick={handleAddFlightLeg}
+                        className="inline-flex items-center gap-1 rounded-xl border border-dashed border-accent/60 bg-accent-soft/40 px-2.5 py-1.5 text-xs font-bold text-accent hover:bg-accent-soft transition cursor-pointer"
+                      >
+                        <PlusCircle className="h-3.5 w-3.5" />
+                        <span>Add Leg</span>
+                      </button>
+                      {records && records.length > 1 && (
                         <button
-                          key={i}
                           type="button"
-                          onClick={() => setActiveLeg(i)}
-                          className={cn(
-                            "inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition shadow-xs",
-                            activeLeg === i
-                              ? "bg-accent text-accent-foreground shadow-sm"
-                              : "bg-background border border-border text-muted-foreground hover:bg-muted hover:text-foreground",
-                          )}
+                          onClick={() => handleRemoveFlightLeg(activeLeg)}
+                          className="inline-flex items-center gap-1 rounded-xl border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs font-semibold text-destructive hover:bg-destructive/10 transition cursor-pointer ml-auto"
+                          title={`Remove Leg ${activeLeg + 1}`}
                         >
-                          <Plane className="h-3 w-3" />
-                          <span>
-                            Leg {i + 1}: {r.from_code || "?"} → {r.to_code || "?"}
-                          </span>
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Remove Leg {activeLeg + 1}</span>
                         </button>
-                      ))}
+                      )}
                     </div>
                   )}
 
@@ -849,66 +1153,96 @@ export function AddBookingButton({
                   )}
                 </div>
 
-                <div className="max-h-72 overflow-y-auto">
+                <div className="max-h-80 overflow-y-auto">
                   <table className="w-full text-sm">
                     <tbody>
-                      {keys.map((k) => (
-                        <tr
-                          key={k}
-                          className={cn(
-                            "border-b last:border-0",
-                            k === "assigned_to" && "bg-accent-soft/40",
-                            k === "amount" && "bg-emerald-500/[0.04]",
-                          )}
-                        >
-                          <td className="w-1/3 px-3 py-2 text-xs font-semibold text-muted-foreground">
-                            {k === "assigned_to"
-                              ? "👤 assigned_to"
-                              : k === "amount"
-                                ? "💰 amount (fare)"
-                                : k}
-                          </td>
-                          <td className="px-3 py-1.5">
-                            {k === "trip" ? (
-                              <select
-                                value={currentRecord[k] ?? GENERAL_TRAVEL}
-                                onChange={(e) => updateActiveRecord(k, e.target.value)}
-                                className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-accent"
-                              >
-                                {tripOptions.map((name) => (
-                                  <option key={name} value={name}>
-                                    {name}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : k === "payment_method" ? (
-                              <select
-                                value={currentRecord[k] ?? ""}
-                                onChange={(e) => updateActiveRecord(k, e.target.value)}
-                                className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-accent"
-                              >
-                                {PAYMENT_METHOD_OPTIONS.map((opt) => (
-                                  <option key={opt || "none"} value={opt}>
-                                    {opt || "Not set — edit later"}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input
-                                value={currentRecord[k] ?? ""}
-                                onChange={(e) => updateActiveRecord(k, e.target.value)}
-                                placeholder={
-                                  k === "amount" && activeLeg > 0 ? "0 (Included in Leg 1)" : ""
-                                }
-                                className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-accent"
-                              />
+                      {keys.map((k) => {
+                        const { label, placeholder, icon } = getFieldLabel(k, kind);
+                        return (
+                          <tr
+                            key={k}
+                            className={cn(
+                              "border-b last:border-0",
+                              k === "assigned_to" && "bg-accent-soft/40",
+                              k === "amount" && "bg-emerald-500/[0.04]",
                             )}
-                          </td>
-                        </tr>
-                      ))}
+                          >
+                            <td className="w-1/3 px-3 py-2 text-xs font-semibold text-muted-foreground">
+                              {icon ? `${icon} ${label}` : label}
+                            </td>
+                            <td className="px-3 py-1.5">
+                              {k === "trip" ? (
+                                <select
+                                  value={currentRecord[k] ?? GENERAL_TRAVEL}
+                                  onChange={(e) => updateActiveRecord(k, e.target.value)}
+                                  className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-accent"
+                                >
+                                  {tripOptions.map((name) => (
+                                    <option key={name} value={name}>
+                                      {name}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : k === "payment_method" ? (
+                                <select
+                                  value={currentRecord[k] ?? ""}
+                                  onChange={(e) => updateActiveRecord(k, e.target.value)}
+                                  className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-accent"
+                                >
+                                  {PAYMENT_METHOD_OPTIONS.map((opt) => (
+                                    <option key={opt || "none"} value={opt}>
+                                      {opt || "Not set — edit later"}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : k === "assigned_to" ? (
+                                <input
+                                  list="booking_users_datalist"
+                                  value={currentRecord[k] ?? ""}
+                                  onChange={(e) => updateActiveRecord(k, e.target.value)}
+                                  placeholder={placeholder || "Search traveler name..."}
+                                  className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-accent"
+                                />
+                              ) : k === "currency" ? (
+                                <input
+                                  list="booking_currency_datalist"
+                                  value={currentRecord[k] ?? ""}
+                                  onChange={(e) => updateActiveRecord(k, e.target.value)}
+                                  placeholder={placeholder || "INR"}
+                                  className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-accent uppercase"
+                                />
+                              ) : (
+                                <input
+                                  value={currentRecord[k] ?? ""}
+                                  onChange={(e) => updateActiveRecord(k, e.target.value)}
+                                  placeholder={
+                                    k === "amount" && activeLeg > 0
+                                      ? "0 (Included in Leg 1)"
+                                      : placeholder
+                                  }
+                                  className="w-full rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none focus:border-accent"
+                                />
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
+
+                <datalist id="booking_users_datalist">
+                  {users.map((u) => (
+                    <option key={u.username} value={u.name || u.username}>
+                      {u.username} ({u.role})
+                    </option>
+                  ))}
+                </datalist>
+                <datalist id="booking_currency_datalist">
+                  {["INR", "USD", "EUR", "GBP", "AED", "SGD", "THB", "JPY", "SAR"].map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
               </div>
             )}
 
@@ -916,9 +1250,11 @@ export function AddBookingButton({
             {currentRecord && canAttachDocument && (
               <div className="rounded-2xl border p-3.5 bg-muted/20">
                 <div className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  {kind === "flight"
-                    ? "E-Ticket Document (Attaches to all legs)"
-                    : "Booking confirmation PDF (optional)"}
+                  {entryMode === "manual"
+                    ? "Attach Ticket or Confirmation (Optional)"
+                    : kind === "flight"
+                      ? "E-Ticket Document (Attaches to all legs)"
+                      : "Booking confirmation PDF (optional)"}
                 </div>
 
                 <input

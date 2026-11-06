@@ -74,8 +74,8 @@ export function computeLayover(
 
   if (!arrDate || !arrTime || !depDate || !depTime) return null;
 
-  const dpA = arrDate.split("/");
-  const dpB = depDate.split("/");
+  const dpA = (arrDate.includes('-') ? arrDate.split('-').reverse() : arrDate.split('/'));
+  const dpB = (depDate.includes('-') ? depDate.split('-').reverse() : depDate.split('/'));
   if (dpA.length !== 3 || dpB.length !== 3) return null;
 
   const [ddA, mmA, yyyyA] = dpA;

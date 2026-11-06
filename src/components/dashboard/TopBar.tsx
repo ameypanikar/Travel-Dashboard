@@ -1,4 +1,4 @@
-import { LogOut, RefreshCw, Search, Settings, KeyRound, Sun, Moon, Plane, Clock, MapPin, Globe, WifiOff } from "lucide-react";
+import { LogOut, RefreshCw, Search, Settings, KeyRound, Sun, Moon, Plane, Clock, MapPin, Globe, WifiOff, Sparkles } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import type { SessionUser } from "@/lib/auth";
 import { SettingsModal } from "./SettingsModal";
@@ -20,10 +20,11 @@ type Props = {
   events?: TravelEvent[];
   onTabChange?: (tab: string) => void;
   onSearch?: () => void;
+  onOpenCopilot?: () => void;
 };
 
 function toYMD(ddmmyyyy: string): string {
-  const p = ddmmyyyy.split("/");
+  const p = (ddmmyyyy.includes('-') ? ddmmyyyy.split('-').reverse() : ddmmyyyy.split('/'));
   if (p.length !== 3) return "";
   return `${p[2]}-${p[1].padStart(2, "0")}-${p[0].padStart(2, "0")}`;
 }
@@ -60,7 +61,7 @@ function getActiveTrip(flights: Flight[], events: TravelEvent[]): { label: strin
 
 function parseDateTime(date: string, time: string): Date | null {
   if (!date || !time) return null;
-  const dp = date.split("/");
+  const dp = (date.includes('-') ? date.split('-').reverse() : date.split('/'));
   if (dp.length !== 3) return null;
   const [dd, mm, yyyy] = dp;
   const [hh, mn] = time.split(":");
@@ -150,14 +151,14 @@ function DualTimezoneWidget({
     hour12: true,
   }).format(now);
 
-  const homeTzName = Intl.DateTimeFormat().resolvedOptions().timeZone.split("/").pop()?.replace(/_/g, " ") || "Home";
+  const homeTzName = (Intl.DateTimeFormat().resolvedOptions().timeZone.includes('-') ? Intl.DateTimeFormat().resolvedOptions().timeZone.split('-').reverse() : Intl.DateTimeFormat().resolvedOptions().timeZone.split('/')).pop()?.replace(/_/g, " ") || "Home";
 
   if (!destInfo || destInfo.timezone === Intl.DateTimeFormat().resolvedOptions().timeZone) {
     return (
-      <div className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-3 py-1.5 backdrop-blur-md border border-white/15 text-xs text-white shadow-sm">
-        <Clock className="h-3.5 w-3.5 text-indigo-200" />
+      <div className="inline-flex items-center gap-1.5 rounded-xl bg-white/12 px-2.5 py-1 backdrop-blur-md border border-white/18 text-xs text-white shadow-xs whitespace-nowrap">
+        <Clock className="h-3 w-3 text-indigo-200 shrink-0" />
         <span className="font-semibold text-white/80">{homeTzName}:</span>
-        <span className="font-mono font-bold tracking-tight text-white tabular-nums">{homeTimeStr}</span>
+        <span className="font-mono font-bold tracking-tight text-white tabular-nums whitespace-nowrap">{homeTimeStr}</span>
       </div>
     );
   }
@@ -199,25 +200,25 @@ function DualTimezoneWidget({
   }
 
   return (
-    <div className="inline-flex flex-wrap items-center gap-2 rounded-2xl bg-white/15 px-3 py-1.5 backdrop-blur-md border border-white/20 text-xs text-white shadow-sm">
-      <div className="flex items-center gap-1.5">
-        <Clock className="h-3 w-3 text-indigo-300" />
-        <span className="text-[11px] text-white/70">Home:</span>
-        <span className="font-mono font-bold tabular-nums text-white/90">{homeTimeStr}</span>
+    <div className="inline-flex items-center gap-2 rounded-xl bg-white/15 px-2.5 py-1 backdrop-blur-md border border-white/20 text-xs text-white shadow-xs whitespace-nowrap overflow-hidden">
+      <div className="flex items-center gap-1 whitespace-nowrap">
+        <Clock className="h-3 w-3 text-indigo-300 shrink-0" />
+        <span className="text-[11px] text-white/70">{homeTzName}:</span>
+        <span className="font-mono font-bold tabular-nums text-white/90 whitespace-nowrap">{homeTimeStr}</span>
       </div>
 
       <span className="text-white/40 font-light hidden sm:inline">|</span>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1 whitespace-nowrap">
         {isDestDay ? (
-          <Sun className="h-3 w-3 text-amber-300" />
+          <Sun className="h-3 w-3 text-amber-300 shrink-0" />
         ) : (
-          <Moon className="h-3 w-3 text-indigo-200" />
+          <Moon className="h-3 w-3 text-indigo-200 shrink-0" />
         )}
         <span className="text-[11px] text-white/70">{destInfo.city}:</span>
-        <span className="font-mono font-bold tabular-nums text-amber-300">{destTimeStr}</span>
+        <span className="font-mono font-bold tabular-nums text-amber-300 whitespace-nowrap">{destTimeStr}</span>
         {diffLabel && (
-          <span className="rounded-md bg-white/15 px-1 py-0.5 text-[10px] font-semibold text-white/80">
+          <span className="rounded-md bg-white/15 px-1 py-0.5 text-[10px] font-semibold text-white/85 shrink-0">
             {diffLabel}
           </span>
         )}
@@ -327,7 +328,7 @@ function NextFlightBanner({ flights, onTabChange }: { flights: Flight[]; onTabCh
   );
 }
 
-export function TopBar({ onRefresh, isFetching, updatedAt, user, onLogout, allUsers = [], flights = [], events = [], onTabChange, onSearch }: Props) {
+export function TopBar({ onRefresh, isFetching, updatedAt, user, onLogout, allUsers = [], flights = [], events = [], onTabChange, onSearch, onOpenCopilot }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const { theme, toggleTheme } = useTheme();
@@ -368,10 +369,10 @@ export function TopBar({ onRefresh, isFetching, updatedAt, user, onLogout, allUs
       )}
 
       {/* Hero gradient header */}
-      <div className="mb-5 -mx-4 px-4 pt-6 pb-4 relative overflow-hidden"
+      <div
+        className="mb-3.5 sm:mb-5 -mx-4 px-4 pt-3.5 sm:pt-5 pb-3 sm:pb-4 relative overflow-hidden rounded-b-2xl sm:rounded-b-3xl shadow-md"
         style={{
           background: "linear-gradient(135deg, oklch(0.46 0.19 264) 0%, oklch(0.38 0.22 285) 50%, oklch(0.52 0.20 240) 100%)",
-          borderRadius: "0 0 1.5rem 1.5rem",
         }}
       >
         {/* Decorative plane trails */}
@@ -386,77 +387,99 @@ export function TopBar({ onRefresh, isFetching, updatedAt, user, onLogout, allUs
             style={{ background: "oklch(0.38 0.22 285)" }} />
         </div>
 
-        <div className="relative flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <div className="flex items-center justify-center w-8 h-8 rounded-xl"
-                style={{ background: "oklch(1 0 0 / 20%)" }}>
+        {/* Header Content */}
+        <div className="relative">
+          {/* Top Row: App Title & User Info on Left, Action Utilities on Right */}
+          <div className="flex items-center justify-between gap-2">
+            {/* Brand + Identity */}
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div
+                className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-xl shrink-0 shadow-sm"
+                style={{ background: "oklch(1 0 0 / 22%)", backdropFilter: "blur(8px)" }}
+              >
                 <Plane className="w-4 h-4 text-white" />
               </div>
-              <h1 className="text-[26px] font-extrabold leading-none tracking-tight text-white">
-                Travel Dashboard
-              </h1>
+              <div className="min-w-0">
+                <h1 className="text-base sm:text-[22px] font-extrabold leading-tight tracking-tight text-white truncate">
+                  Travel Dashboard
+                </h1>
+                {user ? (
+                  <p className="text-[11px] leading-tight text-white/75 truncate mt-0.5">
+                    <span className="font-semibold">{user.name}</span>
+                    <span className="opacity-70"> · {user.role}</span>
+                  </p>
+                ) : (
+                  <p className="text-[11px] leading-tight text-white/70 truncate mt-0.5">
+                    Flights, hotels &amp; what's next
+                  </p>
+                )}
+              </div>
             </div>
-            <div className="ml-10 flex flex-wrap items-center gap-2">
+
+            {/* Action Buttons Group */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onOpenCopilot && (
+                <button
+                  type="button"
+                  onClick={onOpenCopilot}
+                  title="Open Travel Copilot (AI Itinerary & Places Suggestor)"
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-white/20 hover:bg-white/30 backdrop-blur-md border border-white/25 shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-amber-300 animate-pulse shrink-0" />
+                  <span className="hidden sm:inline">AI Copilot</span>
+                  <span className="inline sm:hidden font-extrabold">AI</span>
+                </button>
+              )}
+
+              <div className="flex items-center gap-1">
+                {onSearch && (
+                  <IconBtn onClick={onSearch} label="Search itinerary (Ctrl+K)">
+                    <Search className="h-4 w-4" />
+                  </IconBtn>
+                )}
+                <IconBtn onClick={onRefresh} disabled={isFetching} label="Refresh">
+                  <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+                </IconBtn>
+                {user && (
+                  <IconBtn onClick={() => setShowSettings(true)} label="Settings">
+                    <Settings className="h-4 w-4" />
+                  </IconBtn>
+                )}
+                {user && onLogout && (
+                  <IconBtn onClick={onLogout} label="Logout">
+                    <LogOut className="h-4 w-4" />
+                  </IconBtn>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Row: Active Trip Status on Left, Live Timezone Clock & Sync on Right */}
+          <div className="mt-2.5 pt-2 border-t border-white/15 flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
               {activeTrip ? (
                 <span
-                  className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold animate-fade-in-up"
+                  className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold animate-fade-in-up truncate max-w-full"
                   style={{
                     background: "oklch(1 0 0 / 18%)",
                     color: "white",
                     border: "1px solid oklch(1 0 0 / 25%)",
                   }}
                 >
-                  <MapPin className="h-3 w-3 opacity-80" />
-                  <span className="opacity-70">{activeTrip.label}:</span>
-                  <span className="truncate max-w-[160px]">{activeTrip.name}</span>
+                  <MapPin className="h-3 w-3 text-amber-300 shrink-0" />
+                  <span className="opacity-75 shrink-0">{activeTrip.label}:</span>
+                  <span className="truncate">{activeTrip.name}</span>
                 </span>
               ) : (
-                <p className="text-xs font-medium" style={{ color: "oklch(1 0 0 / 70%)" }}>
-                  Flights, hotels &amp; what's next
+                <p className="text-[11px] font-medium text-white/70 truncate">
+                  {updatedAt ? `Synced ${updatedAt.toLocaleTimeString()}` : "Flights, hotels & what's next"}
                 </p>
               )}
             </div>
 
-            {/* Dual Timezone Live Clock */}
-            <div className="mt-2.5 ml-10">
+            <div className="shrink-0 flex items-center gap-2">
               <DualTimezoneWidget flights={myFlights} events={myEvents} />
             </div>
-          </div>
-
-          <div className="flex flex-col items-end gap-2 shrink-0">
-            <div className="flex items-center gap-1.5">
-              {onSearch && (
-                <IconBtn onClick={onSearch} label="Search itinerary (Ctrl+K)">
-                  <Search className="h-4 w-4" />
-                </IconBtn>
-              )}
-              <IconBtn onClick={onRefresh} disabled={isFetching} label="Refresh">
-                <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
-              </IconBtn>
-              {user && (
-                <IconBtn onClick={() => setShowSettings(true)} label="Settings">
-                  <Settings className="h-4 w-4" />
-                </IconBtn>
-              )}
-              {user && onLogout && (
-                <IconBtn onClick={onLogout} label="Logout">
-                  <LogOut className="h-4 w-4" />
-                </IconBtn>
-              )}
-            </div>
-
-            {user && (
-              <div className="flex flex-col items-end gap-0.5">
-                <span className="text-[11px] font-semibold leading-none text-white">
-                  {user.name}
-                  <span className="ml-1 opacity-70">· {user.role}</span>
-                </span>
-                <span className="text-[10px] leading-none" style={{ color: "oklch(1 0 0 / 55%)" }}>
-                  {updatedAt ? `Synced ${updatedAt.toLocaleTimeString()}` : "—"}
-                </span>
-              </div>
-            )}
           </div>
         </div>
 
@@ -510,10 +533,8 @@ function IconBtn({
       disabled={disabled}
       aria-label={label}
       title={label}
-      className="flex h-9 w-9 items-center justify-center rounded-xl text-white transition-all disabled:opacity-50"
+      className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-xl text-white transition-all disabled:opacity-50 hover:bg-white/25 active:scale-95 cursor-pointer shrink-0"
       style={{ background: "oklch(1 0 0 / 18%)", backdropFilter: "blur(8px)" }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "oklch(1 0 0 / 28%)")}
-      onMouseLeave={(e) => (e.currentTarget.style.background = "oklch(1 0 0 / 18%)")}
     >
       {children}
     </button>

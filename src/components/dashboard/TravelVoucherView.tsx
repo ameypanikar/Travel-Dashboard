@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Printer, X } from "lucide-react";
 import type { Flight, Hotel, Train, Bus, Expense, Advance, Allowance } from "@/lib/dashboard-api";
@@ -7,22 +7,35 @@ import {
   sumBookingInr, sumExpensesByCategory, sumAdvances, formatInr,
   type TripParticipant,
   sumAllowancesMulti,
+  getCardExpensesBreakdownMulti,
+  toIsoDate,
+  formatIsoToDisplay,
 } from "@/lib/expense-utils";
 
 function BoxField({
   label,
   value,
   onChange,
+  onLabelChange,
   wide = false,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  onLabelChange?: (v: string) => void;
   wide?: boolean;
 }) {
   return (
     <div className="flex items-center gap-2 py-1 print:py-0.5">
-      <span className="flex-1 text-[11px]">{label}</span>
+      {onLabelChange ? (
+        <input
+          value={label}
+          onChange={(e) => onLabelChange(e.target.value)}
+          className="flex-1 bg-transparent text-[11px] outline-none border-b border-transparent hover:border-black/30 focus:border-black transition-colors"
+        />
+      ) : (
+        <span className="flex-1 text-[11px]">{label}</span>
+      )}
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -42,6 +55,8 @@ export function TravelVoucherView({
   expenses,
   advances,
   allowances,
+  defaultDepartureDate,
+  defaultArrivalDate,
   onClose,
 }: {
   trip: string;
@@ -53,6 +68,8 @@ export function TravelVoucherView({
   expenses: Expense[];
   advances: Advance[];
   allowances: Allowance[];
+  defaultDepartureDate?: string;
+  defaultArrivalDate?: string;
   onClose: () => void;
 }) {
   const airTickets = sumBookingInrMulti(flights as unknown as Record<string, string>[], "amount", trip, participants);
@@ -66,9 +83,12 @@ export function TravelVoucherView({
   const petrolDiesel = sumExpensesByCategoryMulti(expenses, trip, participants, "Petrol/Diesel");
   const toll = sumExpensesByCategoryMulti(expenses, trip, participants, "Toll");
   const misc = sumExpensesByCategoryMulti(expenses, trip, participants, "Misc. Expenses");
+  const visaCharges = sumExpensesByCategoryMulti(expenses, trip, participants, "Visa Charges");
 
   const cashTotal = sumExpensesByPaymentMethodMulti(expenses, trip, participants, ["Cash", "GPay"]);
   const cardTotal = sumExpensesByPaymentMethodMulti(expenses, trip, participants, ["Card"]);
+  // Group expenses by card — returns all distinct cards used
+  const cardBreakdown = getCardExpensesBreakdownMulti(expenses, trip, participants);
   const advanceTotal = sumAdvancesMulti(advances, trip, participants);
   const allowanceTotal = sumAllowancesMulti(allowances, trip, participants);
 
@@ -76,18 +96,83 @@ export function TravelVoucherView({
   const [date, setDate] = useState(new Date().toLocaleDateString("en-GB"));
   const [employeeNames, setEmployeeNames] = useState(participants.map((p) => p.username).join(", "));
   const [tourTo, setTourTo] = useState(trip);
-  const [departureDate, setDepartureDate] = useState("");
+
+  const fallbackDates = useMemo(() => {
+    let dep = defaultDepartureDate?.trim() || "";
+    let arr = defaultArrivalDate?.trim() || "";
+    if (dep && arr) return { dep, arr };
+
+    const dates: string[] = [];
+    flights.forEach((f) => {
+      const d = toIsoDate((f as any).departuredate || (f as any).departureDate);
+      if (d) dates.push(d);
+    });
+    trains.forEach((t) => {
+      const d = toIsoDate((t as any).departuredate || (t as any).date);
+      if (d) dates.push(d);
+    });
+    buses.forEach((b) => {
+      const d = toIsoDate((b as any).departuredate || (b as any).date);
+      if (d) dates.push(d);
+    });
+    hotels.forEach((h) => {
+      const ci = toIsoDate((h as any).checkindate || (h as any).checkInDate);
+      const co = toIsoDate((h as any).checkoutdate || (h as any).checkOutDate);
+      if (ci) dates.push(ci);
+      if (co) dates.push(co);
+    });
+    expenses.forEach((e) => {
+      let iso = "";
+      if (e.expensedate && e.expensedate.trim()) {
+        iso = toIsoDate(e.expensedate.trim()) || e.expensedate.trim().slice(0, 10);
+      } else if (e.timestamp) {
+        const d = new Date(e.timestamp);
+        if (!Number.isNaN(d.getTime())) iso = d.toISOString().slice(0, 10);
+      }
+      if (iso) dates.push(iso);
+    });
+
+    if (dates.length > 0) {
+      dates.sort();
+      if (!dep) dep = formatIsoToDisplay(dates[0]);
+      if (!arr) arr = formatIsoToDisplay(dates[dates.length - 1]);
+    }
+
+    return { dep: dep || "", arr: arr || dep || "" };
+  }, [defaultDepartureDate, defaultArrivalDate, flights, hotels, trains, buses, expenses]);
+
+  const [departureDate, setDepartureDate] = useState(fallbackDates.dep);
   const [departureTime, setDepartureTime] = useState("");
-  const [arrivalDate, setArrivalDate] = useState("");
+  const [arrivalDate, setArrivalDate] = useState(fallbackDates.arr);
   const [arrivalTime, setArrivalTime] = useState("");
+
+  useEffect(() => {
+    if (defaultDepartureDate) setDepartureDate(defaultDepartureDate);
+  }, [defaultDepartureDate]);
+
+  useEffect(() => {
+    if (defaultArrivalDate) setArrivalDate(defaultArrivalDate);
+  }, [defaultArrivalDate]);
   const [cashExp, setCashExp] = useState(cashTotal.toFixed(2));
   const [cardExp, setCardExp] = useState(cardTotal.toFixed(2));
-  const [line1, setLine1] = useState("");
-  const [line2, setLine2] = useState("");
-  const [line3, setLine3] = useState("");
+  const [cardLines, setCardLines] = useState(() => {
+    const count = Math.max(3, cardBreakdown.length);
+    const lines: { id: string; label: string; amount: string }[] = [];
+    for (let i = 0; i < count; i++) {
+      const card = cardBreakdown[i];
+      lines.push({
+        id: `card-${i}`,
+        label: card ? `${i + 1}) ${card.label}` : `${i + 1}) .....................................`,
+        amount: card ? card.amount.toFixed(2) : "",
+      });
+    }
+    return lines;
+  });
   const [advanceTaken, setAdvanceTaken] = useState(advanceTotal.toFixed(2));
   const [amountReturned, setAmountReturned] = useState("");
   const [airTicketsF, setAirTicketsF] = useState(airTickets.toFixed(2));
+  const [visaChargesF, setVisaChargesF] = useState(visaCharges.toFixed(2));
+  const [showVisaRow, setShowVisaRow] = useState(visaCharges > 0);
   const [lodgingF, setLodgingF] = useState(lodging.toFixed(2));
   const [transportBusTrainF, setTransportBusTrainF] = useState(transportBusTrain.toFixed(2));
   const [transportAutoF, setTransportAutoF] = useState(transportAutoTaxi.toFixed(2));
@@ -99,12 +184,23 @@ export function TravelVoucherView({
   const [amountSanctioned, setAmountSanctioned] = useState("");
   const [tourReport, setTourReport] = useState("");
 
-  const totalExpenses = [airTicketsF, lodgingF, transportBusTrainF, transportAutoF, foodF, petrolF, tollF, allowanceF, miscF]
+  const totalExpenses = [
+    airTicketsF,
+    showVisaRow || parseFloat(visaChargesF) > 0 ? visaChargesF : "0",
+    lodgingF,
+    transportBusTrainF,
+    transportAutoF,
+    foodF,
+    petrolF,
+    tollF,
+    allowanceF,
+    miscF,
+  ]
     .map((v) => parseFloat(v) || 0)
     .reduce((a, b) => a + b, 0);
 
   const breakdown = participants.map((p) => {
-    const total = ["Food", "Transport (Auto/Taxi)", "Petrol/Diesel", "Toll", "Misc. Expenses"].reduce(
+    const total = ["Food", "Transport (Auto/Taxi)", "Petrol/Diesel", "Toll", "Misc. Expenses", "Visa Charges"].reduce(
       (sum, cat) => sum + sumExpensesByCategory(expenses, trip, p.username, p.name, cat),
       0,
     );
@@ -205,9 +301,23 @@ export function TravelVoucherView({
             <div>
               <BoxField label="Total Cash Exp. :" value={cashExp} onChange={setCashExp} />
               <BoxField label="Total Credit Card Exp. :" value={cardExp} onChange={setCardExp} />
-              <BoxField label="1) ....................................." value={line1} onChange={setLine1} />
-              <BoxField label="2) ....................................." value={line2} onChange={setLine2} />
-              <BoxField label="3) ....................................." value={line3} onChange={setLine3} />
+              {cardLines.map((line, idx) => (
+                <BoxField
+                  key={line.id}
+                  label={line.label}
+                  value={line.amount}
+                  onChange={(v) =>
+                    setCardLines((prev) =>
+                      prev.map((item, i) => (i === idx ? { ...item, amount: v } : item)),
+                    )
+                  }
+                  onLabelChange={(newLabel) =>
+                    setCardLines((prev) =>
+                      prev.map((item, i) => (i === idx ? { ...item, label: newLabel } : item)),
+                    )
+                  }
+                />
+              ))}
               <div className="mt-3 border-t border-black pt-2 print:mt-1.5 print:pt-1">
                 <BoxField label="Advance Taken Rs. :" value={advanceTaken} onChange={setAdvanceTaken} />
                 <BoxField label="Amount Returned / Received Rs. :" value={amountReturned} onChange={setAmountReturned} />
@@ -215,6 +325,22 @@ export function TravelVoucherView({
             </div>
             <div>
               <BoxField label="• Air Tickets" value={airTicketsF} onChange={setAirTicketsF} />
+              {(showVisaRow || parseFloat(visaChargesF) > 0) ? (
+                <BoxField label="• Visa Charges" value={visaChargesF} onChange={setVisaChargesF} />
+              ) : (
+                <div className="print:hidden py-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowVisaRow(true);
+                      if (!parseFloat(visaChargesF)) setVisaChargesF("0.00");
+                    }}
+                    className="text-[10px] text-muted-foreground hover:text-accent font-medium underline"
+                  >
+                    + Add Visa Charges
+                  </button>
+                </div>
+              )}
               <BoxField label="• Lodging" value={lodgingF} onChange={setLodgingF} />
               <BoxField label="• Transport (Bus/Train)" value={transportBusTrainF} onChange={setTransportBusTrainF} />
               <BoxField label="• Transport (Auto/Taxi)" value={transportAutoF} onChange={setTransportAutoF} />
@@ -235,7 +361,7 @@ export function TravelVoucherView({
           <div className="mt-8 flex items-end justify-between print:mt-4">
             <div className="text-[11px]">
               _________________________<br />
-              (Signature of Employee / Director)
+              (Signature of Employee)
             </div>
             <BoxField label="Amount Sanctioned Rs. :" value={amountSanctioned} onChange={setAmountSanctioned} wide />
           </div>

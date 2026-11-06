@@ -74,10 +74,10 @@ export async function autoRouteTransportTicket(
       continue;
     }
     if (!res.ok) {
-      if (res.status === 401) {
-        throw new Error("SYSTEM UPDATE REQUIRED: Your Gemini API token is outdated or invalid. Please check your settings.");
+      if (res.status === 401 || res.status === 403) {
+        throw new Error("API Authentication failed. Please check your credentials or log in again.");
       }
-      throw new Error(`Gemini error ${res.status}`);
+      throw new Error(`Failed to extract data (Error ${res.status}). Please try again.`);
     }
 
     const json = await res.json();
@@ -124,7 +124,7 @@ export async function autoRouteTransportTicket(
     const trimmed = fxDateDdMmYyyy.trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) fxIso = trimmed;
     else {
-      const parts = trimmed.split("/");
+      const parts = (trimmed.includes('-') ? trimmed.split('-').reverse() : trimmed.split('/'));
       if (parts.length === 3 && parts[2].length === 4)
         fxIso = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
     }
@@ -160,7 +160,7 @@ export async function autoRouteTransportTicket(
     const rTrimmed = relevantDate.trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(rTrimmed)) relevantIso = rTrimmed;
     else {
-      const parts = rTrimmed.split("/");
+      const parts = (rTrimmed.includes('-') ? rTrimmed.split('-').reverse() : rTrimmed.split('/'));
       if (parts.length === 3 && parts[2].length === 4)
         relevantIso = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
     }
@@ -169,11 +169,11 @@ export async function autoRouteTransportTicket(
       if (ev.status !== "Booked") return false;
       let start = ev.startdate;
       if (!start) return false;
-      const sparts = start.split("/");
+      const sparts = (start.includes('-') ? start.split('-').reverse() : start.split('/'));
       if (sparts.length === 3)
         start = `${sparts[2]}-${sparts[1].padStart(2, "0")}-${sparts[0].padStart(2, "0")}`;
       let end = ev.enddate || ev.startdate;
-      const eparts = end.split("/");
+      const eparts = (end.includes('-') ? end.split('-').reverse() : end.split('/'));
       if (eparts.length === 3)
         end = `${eparts[2]}-${eparts[1].padStart(2, "0")}-${eparts[0].padStart(2, "0")}`;
 

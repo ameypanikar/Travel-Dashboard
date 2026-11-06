@@ -62,7 +62,7 @@ function DocumentViewerDialog({
 // Parses a DD/MM/YYYY string (the format used throughout this app for dates) into a Date.
 function parseDdMmYyyy(dateStr?: string): Date | null {
   if (!dateStr) return null;
-  const parts = dateStr.split("/");
+  const parts = (dateStr.includes('-') ? dateStr.split('-').reverse() : dateStr.split('/'));
   if (parts.length !== 3) return null;
   const [dd, mm, yyyy] = parts.map((p) => parseInt(p, 10));
   if (!dd || !mm || !yyyy) return null;

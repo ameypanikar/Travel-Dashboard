@@ -31,9 +31,10 @@ flowchart TB
     end
 
     subgraph ExternalAPIs ["External Intelligence Services"]
-        Gemini["Google Gemini API (Vision / 3.1 Flash Lite)"]
+        Gemini["Google Gemini API (Vision / Copilot Engine / Multi-Model Fallback)"]
         OpenMeteo["Open-Meteo Weather API (CORS, No Auth)"]
         Frankfurter["Frankfurter Currency FX API"]
+        OSM["OpenStreetMap Nominatim & Overpass API (Places & Stations)"]
         TransitPortals["Airline Trackers & IRCTC / RailYatri Portals"]
     end
 
@@ -49,9 +50,10 @@ flowchart TB
     Postgres --- RLS
     UI <-->|"Upload & Retrieve Tickets/Receipts"| Storage
 
-    UI -->|"Receipt Boundary Crop & Parsing"| Gemini
+    UI -->|"Receipt Boundary Crop & Ingestion"| Gemini
     UI -->|"Airport & Destination Forecasts"| OpenMeteo
     UI -->|"Real-Time Currency Conversion to INR"| Frankfurter
+    UI -->|"Client Geocoding, Railway Stations & Nearby Food"| OSM
     UI -->|"External Deep Links (PNR / Flight Status)"| TransitPortals
 ```
 
@@ -90,10 +92,17 @@ flowchart TB
 - **Supabase Storage**: Object storage bucket (`documents`) hosting PDF boarding passes, ticket images, and high-resolution expense receipts.
 
 ### 2.5 External Services & Intelligence
-- **Google Gemini AI (`gemini-3.1-flash-lite`)**: Multimodal LLM leveraged for:
+- **Google Gemini AI (`gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-1.5-flash`)**: Multi-model vision & reasoning pipeline leveraged for:
   - Computer vision receipt bounding box identification and automatic image cropping (`src/lib/receipt-crop.ts`).
-  - Expense receipt data extraction (amount, date, merchant, category).
+  - Expense receipt data extraction (amount, date, merchant, category, payment method hints).
+  - Multi-receipt photo analysis with mathematical summing of multiple paper slips.
+  - Conversational Travel Copilot engine with intent gating and itinerary advisory (`src/lib/travel-copilot-engine.ts`).
   - Audio and natural language parsing for quick-entry notes and reminders.
+- **OpenStreetMap Nominatim & Overpass API**: Zero-cost, CORS-enabled geocoding and geospatial query engine used for:
+  - Client / customer location address geocoding.
+  - Nearby major Indian railway stations discovery with IRCTC deep links.
+  - Local dining discovery within 5 km of hotel/meeting coordinates (`src/lib/travel-places-api.ts`).
+- **Offline Spatial Airport Database (`src/lib/airport-data.ts`)**: Pre-indexed dataset of Indian and international commercial airports with Haversine distance and drive-time calculations.
 - **Open-Meteo Weather API**: Zero-API-key, CORS-enabled forecast service with airport-to-coordinate geocoding dictionary.
 - **Frankfurter FX API**: Real-time and historical European Central Bank exchange rate service for automated currency conversion to INR.
 
@@ -116,6 +125,7 @@ travel-tracker-dashboard/
 │   │   │   ├── LoginPage.tsx          # Login form with instant password hashing
 │   │   │   └── ChangePasswordModal.tsx# Password reset with note re-encryption
 │   │   ├── dashboard/        # Feature-specific dashboard components
+│   │   │   ├── AddBookingButton.tsx   # AI ticket & booking document scanner (PDF/images)
 │   │   │   ├── FlightsList.tsx        # Flight cards with status & airline branding
 │   │   │   ├── HotelsList.tsx         # Hotel stays with room assignments & maps
 │   │   │   ├── TrainsList.tsx         # IRCTC train bookings with live tracker
@@ -123,34 +133,58 @@ travel-tracker-dashboard/
 │   │   │   ├── EventsTabContent.tsx   # Events, standing tours & notes
 │   │   │   ├── DailyItinerary.tsx     # Chronological daily timeline
 │   │   │   ├── MonthlyView.tsx        # Month-at-a-glance travel calendar
-│   │   │   ├── SpendTabContent.tsx    # Expense tracking & vouchers
+│   │   │   ├── SpendTabContent.tsx    # Expense tracking, vouchers & spend view tabs
+│   │   │   ├── SpendView.tsx          # Executive spend analytics & Recharts dashboard
+│   │   │   ├── SpendEditDialog.tsx    # Booking spend financial editor & FX recalculator
+│   │   │   ├── TripExpensesPanel.tsx  # Trip financial management & Owner/Staff split voucher panel
 │   │   │   ├── TravelVoucherView.tsx  # Print-ready corporate voucher generator
 │   │   │   ├── ConsolidatedReceiptsView.tsx # Receipt gallery, 3x3/4x3 print grids & auditor
 │   │   │   ├── AddExpenseForm.tsx     # AI-assisted expense logging form with draft saving
+│   │   │   ├── EditExpenseDialog.tsx  # Expense record modification dialog
+│   │   │   ├── SingleReceiptReviewModal.tsx # Quick receipt verification & payment method selector
+│   │   │   ├── BatchUploadModal.tsx   # Batch receipt upload modal with corporate card/bank picker
+│   │   │   ├── TravelCopilotSheet.tsx # Conversational AI travel copilot slide-over sheet
 │   │   │   ├── ExpenseUploadModal.tsx # UPI-style upload & celebratory success modal
+│   │   │   ├── PersonFilterBar.tsx    # Interactive horizontal scrollable traveler filter bar
+│   │   │   ├── DateFilterBar.tsx      # Contextual date filter pill bar
+│   │   │   ├── TripFilterBar.tsx      # Trip selector pill bar
+│   │   │   ├── LocalEats.tsx          # OpenStreetMap Nominatim dining discovery component
+│   │   │   ├── UberTab.tsx            # Uber quick-ride shortcut modal
 │   │   │   ├── TravelSearchDialog.tsx # Universal travel omnisearch & command palette (Ctrl+K)
 │   │   │   ├── AddButtonMenu.tsx      # Floating quick action menu (FAB)
-│   │   │   ├── TopBar.tsx             # Dual timezone clock, countdown, search & profile
+│   │   │   ├── TopBar.tsx             # Responsive dual-row header, dual timezone clock & profile
 │   │   │   ├── FlightLiveTrackerModal.tsx # Airline flight status links
 │   │   │   ├── TrainLiveTrackerModal.tsx  # RailYatri/ConfirmTkt PNR tracker
+│   │   │   ├── WeatherBadge.tsx       # Compact destination weather pill
 │   │   │   ├── WeatherForecastDialog.tsx  # 16-day Open-Meteo forecast modal
-│   │   │   └── SettingsModal.tsx      # Gemini key, model & user administration
+│   │   │   ├── EditNoteReminderDialog.tsx # Decrypted note & reminder editor
+│   │   │   └── SettingsModal.tsx      # App settings (AI config, users, company cards)
 │   │   └── ui/               # Reusable Radix UI & design system primitives (Button, Dialog, Card, etc.)
 │   ├── hooks/
 │   │   ├── use-theme.tsx     # Dark / light theme management
 │   │   ├── use-swipe.ts      # Mobile touch swipe gesture listener with form guardrails
+│   │   ├── use-pinch.ts      # Multi-touch pinch gesture listener
 │   │   └── use-mobile.tsx    # Viewport breakpoint detection
 │   ├── lib/
+│   │   ├── airport-data.ts   # Spatial commercial airport dataset with IATA & Haversine math
 │   │   ├── auth.ts           # Session storage, SHA-256 hashing, RPC login
+│   │   ├── auto-router.ts    # AI ticket document classifier & auto-routing pipeline
+│   │   ├── booking-prompts.ts# Gemini Vision structured schemas for flights, hotels, trains, buses
+│   │   ├── booking-utils.ts  # Layover computation, ticket validation & passenger normalization
+│   │   ├── confetti.ts       # Canvas celebratory confetti particle engine
 │   │   ├── note-crypto.ts    # Web Crypto PBKDF2 + AES-256-GCM zero-knowledge engine
+│   │   ├── useDecryptedNotesReminders.ts # Reactive decrypted note & reminder state hook
 │   │   ├── supabase.ts       # Supabase client singleton with custom header injection
-│   │   ├── dashboard-api.ts  # Master CRUD API service layer for all tables
+│   │   ├── dashboard-api.ts  # Master CRUD API service layer for all tables & config
+│   │   ├── date-utils.ts     # Standardized ISO, IST & DD/MM/YYYY date formatting utilities
 │   │   ├── role-filter.ts    # RBAC logic & passenger name canonicalization
-│   │   ├── expense-utils.ts  # Multi-currency spend calculations & voucher math
+│   │   ├── expense-utils.ts  # Multi-currency spend calculations, card aggregation & voucher math
 │   │   ├── expense-draft.ts  # Form draft persistence & recovery across sessions
+│   │   ├── travel-copilot-engine.ts # Context-grounded Gemini copilot reasoning engine
+│   │   ├── travel-places-api.ts     # OpenStreetMap Overpass & Nominatim geospatial client
 │   │   ├── travel-search.ts  # Omnisearch index builder across all travel records
 │   │   ├── weather-api.ts    # Airport coordinate mapping & Open-Meteo client
-│   │   ├── receipt-crop.ts   # Gemini Vision receipt boundary cropper & normalizer
+│   │   ├── receipt-crop.ts   # Gemini Vision receipt boundary cropper, scaler & canvas compressor
 │   │   ├── offline-storage.ts# CacheStorage document cacher & offline snapshot
 │   │   ├── i18n.ts           # Multilingual translation dictionary (EN, HI, MR)
 │   │   └── error-capture.ts  # SSR catastrophic error interceptor
@@ -215,3 +249,29 @@ Field staff and travelers frequently navigate away or switch tabs while logging 
 - Form fields (`amount`, `currency`, `date`, `category`, `paymentMethod`, `cardUsed`, `description`, `receiptFile`) are continuously serialized to `localStorage` with timestamping and Base64-encoded receipt caching.
 - On return or page refresh, drafts are restored with a visible timestamp pill and a one-click "Discard" option.
 - Drafts are atomically wiped only when an expense is successfully committed to Supabase.
+
+### 4.6 Multi-Modal AI Ticket Routing & Layover Engine (`auto-router.ts`, `booking-prompts.ts`, `booking-utils.ts`)
+Ingesting diverse PDF tickets, boarding passes, and reservation images presents significant unstructured data challenges:
+- **Heuristic Classifier & Structured Schemas**: Gemini Vision is prompted with strict JSON schemas tailored to flights, hotels, trains, or buses, producing zero-preamble structured data.
+- **Connecting Flight Decomposition**: Multi-leg journeys are never flattened into single rows. Instead, each segment is isolated chronologically, and `computeLayover()` derives intermediate airport stopovers and waiting times.
+- **Passenger Fuzzy Matching**: Airline booking formats (e.g. `HEMAN/VISHWAS MR`) are reconciled against the user database using salutation stripping, token reversal, and canonical alias mapping (`normalizeAssignedTo`).
+- **Transactional Attachment Pipeline**: Document binaries are pushed to Supabase Storage (`documents` bucket), returning persistent URLs before records are committed to PostgREST.
+
+### 4.7 Zero-Key Geocoding & Local Dining Intelligence (`LocalEats.tsx`)
+Providing out-of-town travelers with immediate dining recommendations without recurring Google Places API billing:
+- **Public OpenStreetMap Nominatim**: Directly queries Nominatim endpoints using CORS-compliant browser fetches, filtering for amenity types (`restaurant`, `fast_food`, `cafe`).
+- **Spherical Geometry Calculations**: Implements the Haversine trigonometric formula directly in TypeScript to compute true geodesic surface distances from traveler GPS or hotel coordinates.
+- **Client-Side Taxonomy Categorization**: Classifies raw OpenStreetMap cuisine tags into 9 intuitive business dining categories (Indian, Chinese, Italian, Fast Food, Cafe, Pizza, Seafood, Vegetarian, All).
+
+### 4.8 Context-Grounded Travel Copilot Architecture (`travel-copilot-engine.ts`, `travel-places-api.ts`)
+A specialized client-side conversational copilot architecture built without heavy external bot frameworks:
+- **Zero-Key Spatial Integration**: Uses OpenStreetMap Nominatim for client campus geocoding and the Overpass API for discovering nearby restaurants within a 5 km radius.
+- **Offline Airport Spatial Dataset (`airport-data.ts`)**: Embedded spatial database of 30+ Indian commercial airports. Queries compute driving distances and approximate travel times via Haversine math entirely offline.
+- **Strict Visual Intent Filtering**: Card emission rules ensure commercial airport cards, railway station cards, and dining cards only render when the traveler explicitly asks for flights, trains, or meals.
+- **Streaming UI Emulation**: The engine delivers streaming responses using a word-by-word typewriter generator with a blinking terminal cursor and PWA back-button interception.
+
+### 4.9 Pre-Upload Image Compression Pipeline (`compressImageForStorage` in `receipt-crop.ts`)
+To prevent mobile camera images (3MB–10MB) from slowing down multi-receipt batch processing:
+- Before any binary is dispatched to Supabase Storage, an offscreen HTML5 `<canvas>` clamps dimensions to a maximum 1600px envelope and compresses the image to a quality-controlled JPEG (~250KB).
+- Yields a >90% bandwidth reduction while preserving OCR-grade sharpness for numbers and tax breakdown text.
+

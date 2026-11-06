@@ -21,11 +21,11 @@ export function TripFilterBar({ value, onChange, trips, className }: Props) {
           <Button
             variant="outline"
             className={cn(
-              "h-10 flex-1 justify-start gap-2 rounded-xl border-border bg-card text-left text-sm font-semibold shadow-card hover:bg-accent-soft",
+              "h-10 flex-1 min-w-0 justify-start gap-1.5 px-2.5 sm:px-3 rounded-xl border-border bg-card text-left text-xs sm:text-sm font-semibold shadow-card hover:bg-accent-soft",
               value ? "text-accent" : "text-muted-foreground",
             )}
           >
-            <Filter className="h-4 w-4 shrink-0" />
+            <Filter className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
             <span className="truncate">
               {value ? `Trip: ${value}` : "Filter by trip"}
             </span>
@@ -64,12 +64,13 @@ export function TripFilterBar({ value, onChange, trips, className }: Props) {
       {value && (
         <Button
           variant="outline"
+          size="icon"
           onClick={() => onChange(null)}
-          className="h-10 rounded-xl border-border bg-card text-accent shadow-card hover:bg-accent-soft px-3"
+          className="h-10 w-10 shrink-0 rounded-xl border-border bg-card text-accent shadow-card hover:bg-accent-soft p-0"
           aria-label="Clear trip filter"
+          title="Clear trip filter"
         >
-          <X className="h-4 w-4 shrink-0" />
-          <span className="sr-only">Clear</span>
+          <X className="h-4 w-4" />
         </Button>
       )}
     </div>

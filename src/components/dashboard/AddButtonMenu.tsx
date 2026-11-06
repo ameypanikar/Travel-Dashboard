@@ -61,11 +61,13 @@ export function AddButtonMenu({
       </div>
 
       <AddBookingButton
+        user={user}
         users={users}
         events={events}
         uberSuggestions={uberSuggestions}
         open={bookingOpen}
         onOpenChange={setBookingOpen}
+        onRefresh={onRefresh}
         hideTrigger
       />
       <AddNoteReminderModal

@@ -14,7 +14,7 @@ const toYMD = (d: Date) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const toISO = (ddmmyyyy?: string): string => {
   if (!ddmmyyyy) return "";
-  const parts = String(ddmmyyyy).split("/");
+  const parts = (String(ddmmyyyy).includes('-') ? String(ddmmyyyy).split('-').reverse() : String(ddmmyyyy).split('/'));
   if (parts.length !== 3) return "";
   return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
 };

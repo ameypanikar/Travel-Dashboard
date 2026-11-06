@@ -332,7 +332,7 @@ export async function fetchWeather(locationQuery: string): Promise<FullWeatherRe
       weatherCode,
       condition,
       timezone,
-      timezoneAbbreviation: data.timezone_abbreviation || timezone.split("/").pop() || "",
+      timezoneAbbreviation: data.timezone_abbreviation || (timezone.includes('-') ? timezone.split('-').reverse() : timezone.split('/')).pop() || "",
       utcOffsetSeconds,
       localTime: localTimeStr,
       city: coords.city,
@@ -378,7 +378,7 @@ export function normalizeDateToYmd(dateStr?: string): string {
   if (!dateStr || !dateStr.trim()) return "";
   const s = dateStr.trim();
   if (s.includes("/")) {
-    const p = s.split("/");
+    const p = (s.includes('-') ? s.split('-').reverse() : s.split('/'));
     if (p.length === 3) {
       return `${p[2]}-${p[1].padStart(2, "0")}-${p[0].padStart(2, "0")}`;
     }

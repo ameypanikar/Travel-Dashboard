@@ -5,7 +5,7 @@ import { AddExpenseForm } from "./AddExpenseForm";
 import { TripExpensesPanel } from "./TripExpensesPanel";
 import { useSwipe } from "@/hooks/use-swipe";
 import { hasExpenseDraft } from "@/lib/expense-draft";
-import type { Flight, Hotel, Train, Bus, TravelEvent, Expense, Advance, Allowance } from "@/lib/dashboard-api";
+import type { Flight, Hotel, Train, Bus, TravelEvent, Expense, Advance, Allowance, StandingTourBatch } from "@/lib/dashboard-api";
 import type { SessionUser } from "@/lib/auth";
 
 type UserEntry = { name: string; username: string; role: string };
@@ -51,7 +51,9 @@ export function SpendTabContent({
   expenses,
   advances,
   allowances,
+  batches = [],
   onRefresh,
+  initialTrip,
 }: {
   user: SessionUser;
   users: UserEntry[];
@@ -63,22 +65,27 @@ export function SpendTabContent({
   expenses: Expense[];
   advances: Advance[];
   allowances: Allowance[];
+  batches?: StandingTourBatch[];
   onRefresh: () => void;
+  initialTrip?: string | null;
 }) {
   const canSeeAll = FULL_ACCESS_ROLES.includes((user.role || "").trim().toLowerCase());
-  // Automatically resume 'add' view if a draft is in progress, or restore from session
-  const [view, setView] = useState<"dashboard" | "add">(() => {
+  type SpendViewMode = "dashboard" | "settlement" | "add";
+
+  // Automatically resume 'add' view if a draft is in progress, or restore from session, or default to settlement if initialTrip
+  const [view, setView] = useState<SpendViewMode>(() => {
+    if (initialTrip && canSeeAll) return "settlement";
     if (typeof window !== "undefined" && hasExpenseDraft(user.username)) return "add";
     if (typeof window !== "undefined") {
       try {
-        const saved = window.sessionStorage?.getItem(`spend_active_view_${user.username}`);
-        if (saved === "add" || saved === "dashboard") return saved;
+        const saved = window.sessionStorage?.getItem(`spend_active_view_${user.username}`) as SpendViewMode;
+        if (saved === "add" || saved === "dashboard" || (saved === "settlement" && canSeeAll)) return saved;
       } catch {}
     }
     return "dashboard";
   });
 
-  const handleSetView = (next: "dashboard" | "add") => {
+  const handleSetView = (next: SpendViewMode) => {
     setView(next);
     if (typeof window !== "undefined") {
       try {
@@ -93,7 +100,7 @@ export function SpendTabContent({
       e.stopPropagation();
       if (view === "dashboard") {
         navigator.vibrate?.(30);
-        handleSetView("add");
+        handleSetView(canSeeAll ? "settlement" : "add");
       }
     },
     onSwipeRight: (e) => {
@@ -110,26 +117,55 @@ export function SpendTabContent({
 
   return (
     <div ref={swipeRef} className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={() => handleSetView("dashboard")}
-          className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
-            view === "dashboard" ? "bg-accent text-accent-foreground shadow-card" : "bg-card text-accent shadow-card hover:bg-accent-soft"
-          }`}
-        >
-          Dashboard
-        </button>
-        <button
-          onClick={() => handleSetView("add")}
-          className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
-            view === "add" ? "bg-accent text-accent-foreground shadow-card" : "bg-card text-accent shadow-card hover:bg-accent-soft"
-          }`}
-        >
-          Add Expense
-        </button>
-      </div>
+      {canSeeAll ? (
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            onClick={() => handleSetView("dashboard")}
+            className={`rounded-xl px-2 py-2 text-xs font-bold transition text-center ${
+              view === "dashboard" ? "bg-accent text-accent-foreground shadow-card" : "bg-card text-accent shadow-card hover:bg-accent-soft"
+            }`}
+          >
+            Spend Overview
+          </button>
+          <button
+            onClick={() => handleSetView("add")}
+            className={`rounded-xl px-2 py-2 text-xs font-bold transition text-center ${
+              view === "add" ? "bg-accent text-accent-foreground shadow-card" : "bg-card text-accent shadow-card hover:bg-accent-soft"
+            }`}
+          >
+            + Add Expense
+          </button>
+          <button
+            onClick={() => handleSetView("settlement")}
+            className={`rounded-xl px-2 py-2 text-xs font-bold transition text-center ${
+              view === "settlement" ? "bg-accent text-accent-foreground shadow-card" : "bg-card text-accent shadow-card hover:bg-accent-soft"
+            }`}
+          >
+            Trip Settlements
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => handleSetView("dashboard")}
+            className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
+              view === "dashboard" ? "bg-accent text-accent-foreground shadow-card" : "bg-card text-accent shadow-card hover:bg-accent-soft"
+            }`}
+          >
+            Dashboard
+          </button>
+          <button
+            onClick={() => handleSetView("add")}
+            className={`rounded-xl px-3 py-2 text-xs font-bold transition ${
+              view === "add" ? "bg-accent text-accent-foreground shadow-card" : "bg-card text-accent shadow-card hover:bg-accent-soft"
+            }`}
+          >
+            Add Expense
+          </button>
+        </div>
+      )}
 
-      {view === "dashboard" ? (
+      {view === "dashboard" && (
         <SpendView
           flights={scopedFlights}
           hotels={scopedHotels}
@@ -137,28 +173,32 @@ export function SpendTabContent({
           buses={scopedBuses}
           events={events}
           expenses={scopedExpenses}
+          allowances={allowances}
           canSeeAll={canSeeAll}
           users={users}
         />
-      ) : (
-        <>
-          <AddExpenseForm user={user} users={users} expenses={expenses} events={events} onRefresh={onRefresh} />
-          {canSeeAll && (
-            <TripExpensesPanel
-              flights={flights}
-              hotels={hotels}
-              trains={trains}
-              buses={buses}
-              events={events}
-              expenses={expenses}
-              advances={advances}
-              allowances={allowances}
-              users={users}
-              user={user}
-              onRefresh={onRefresh}
-            />
-          )}
-        </>
+      )}
+
+      {view === "settlement" && canSeeAll && (
+        <TripExpensesPanel
+          flights={flights}
+          hotels={hotels}
+          trains={trains}
+          buses={buses}
+          events={events}
+          expenses={expenses}
+          advances={advances}
+          allowances={allowances}
+          users={users}
+          user={user}
+          batches={batches}
+          onRefresh={onRefresh}
+          initialTrip={initialTrip}
+        />
+      )}
+
+      {view === "add" && (
+        <AddExpenseForm user={user} users={users} expenses={expenses} events={events} onRefresh={onRefresh} />
       )}
     </div>
   );

@@ -13,8 +13,8 @@ The documentation is organized into 7 focused manuals:
 | [**01. Project Vision, Origins & Evolution**](file:///home/embedded4/travel-tracker-dashboard/docs/01_PROJECT_VISION_AND_EVOLUTION.md) | Origins & Strategy | Why the project was created, failure points of the original Google Sheets workflow, the 5-stage transformation, and corporate objectives. |
 | [**02. Architecture & Tech Stack**](file:///home/embedded4/travel-tracker-dashboard/docs/02_ARCHITECTURE_AND_TECH_STACK.md) | System Design | Full-stack architecture (TanStack Start, React 19, Supabase, Cloudflare Workers), directory anatomy, Omnisearch architecture, and error-handling patterns. |
 | [**03. Database Schema & Security Model**](file:///home/embedded4/travel-tracker-dashboard/docs/03_DATABASE_SCHEMA_AND_SECURITY.md) | Database & Crypto | Specifications of all 13 PostgreSQL tables, custom session auth (`login_secure`), Row-Level Security (RLS), and Web Crypto AES-256-GCM encryption. |
-| [**04. Core Features & User Workflows**](file:///home/embedded4/travel-tracker-dashboard/docs/04_CORE_FEATURES_AND_WORKFLOWS.md) | Features & Transit | Multi-modal transit cards, universal Omnisearch (`Ctrl+K`), live transit trackers, Gemini AI receipt cropping, UPI upload animation, draft auto-saving, offline caching, and i18n. |
-| [**05. Corporate Spend & Voucher Engine**](file:///home/embedded4/travel-tracker-dashboard/docs/05_CORPORATE_SPEND_AND_VOUCHERS.md) | Finance & Accounting | Corporate expense logging, card spend separation, Frankfurter FX, shared cost allocation, print-ready vouchers, resilient Google Drive receipts, and 3x3/4x3 print grids. |
+| [**04. Core Features & User Workflows**](file:///home/embedded4/travel-tracker-dashboard/docs/04_CORE_FEATURES_AND_WORKFLOWS.md) | Features & Transit | Multi-modal transit cards, AI booking ingestion, Travel Copilot AI & spatial engine, multi-receipt photo scanning, Omnisearch (`Ctrl+K`), live transit trackers, mobile responsive layout, and offline mode. |
+| [**05. Corporate Spend & Voucher Engine**](file:///home/embedded4/travel-tracker-dashboard/docs/05_CORPORATE_SPEND_AND_VOUCHERS.md) | Finance & Accounting | Corporate expense logging, payment methods, card breakdown, Frankfurter FX, shared cost math, Owner vs Staff vouchers, spend analytics, and print settlement. |
 | [**06. Scripts & Data Migration Guide**](file:///home/embedded4/travel-tracker-dashboard/docs/06_SCRIPTS_AND_MIGRATION_GUIDE.md) | Migration & Diagnostics | The Excel data migration pipeline (`migrate-from-excel.ts`), database seed scripts, hotfixes, and targeted CLI verification utilities. |
 | [**07. Codebase Audit & Strategic Roadmap**](file:///home/embedded4/travel-tracker-dashboard/docs/07_AUDIT_FINDINGS_AND_ROADMAP.md) | Audit & Future Work | Critical evaluation of architectural wins, technical debt/security findings, and a 4-phase engineering roadmap (Realtime, PWA, ERP export). |
 
@@ -54,8 +54,9 @@ Depending on your role or objective, here is the suggested reading sequence:
 │ Database        │ PostgreSQL 15 on Supabase                              │
 │ Authentication  │ Custom Session Auth (Prefer: custom-auth-... header)   │
 │ Encryption      │ Browser Web Crypto API (AES-256-GCM + PBKDF2 150k)     │
-│ AI Vision       │ Google Gemini API (gemini-3.1-flash-lite)              │
-│ FX / Weather    │ Frankfurter Currency API & Open-Meteo Weather API      │
+│ AI Intelligence │ Google Gemini (Vision & Copilot multi-model fallback)  │
+│ FX / Geospatial │ Frankfurter FX, OpenStreetMap (Nominatim/Overpass)     │
+│ Weather API     │ Open-Meteo Weather API (CORS, Zero-Key)                │
 │ Deployment      │ Cloudflare Workers / Nitro SSR Engine                  │
 └─────────────────┴────────────────────────────────────────────────────────┘
 ```

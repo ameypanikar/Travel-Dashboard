@@ -99,10 +99,12 @@ function ResilientReceiptImage({ url, label }: { url: string; label: string }) {
 export function ConsolidatedReceiptsView({
   trip,
   receipts,
+  dateRangeSubtitle,
   onClose,
 }: {
   trip: string;
   receipts: { url: string; mimetype: string; label: string }[];
+  dateRangeSubtitle?: string;
   onClose: () => void;
 }) {
   const [cols, setCols] = useState<3 | 4>(3);
@@ -118,7 +120,12 @@ export function ConsolidatedReceiptsView({
       {/* Top action bar - hidden during print */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 bg-card/60 backdrop-blur print:hidden">
         <div className="flex items-center gap-2">
-          <div className="text-sm font-bold">Receipts — {trip}</div>
+          <div className="text-sm font-bold">
+            Receipts — {trip}
+            {dateRangeSubtitle && (
+              <span className="ml-1.5 text-xs font-normal text-muted-foreground">({dateRangeSubtitle})</span>
+            )}
+          </div>
           <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-semibold text-accent">
             {imageReceipts.length} images · {otherReceipts.length} PDFs
           </span>
@@ -181,7 +188,9 @@ export function ConsolidatedReceiptsView({
       {/* Main content */}
       <div className="flex-1 overflow-y-auto p-4 print:flex-none print:overflow-visible print:p-0">
         <div className="mb-2 hidden items-center justify-between border-b pb-1 text-xs print:flex print:text-black">
-          <span className="font-bold uppercase tracking-wider text-xs">Consolidated Receipts — {trip}</span>
+          <span className="font-bold uppercase tracking-wider text-xs">
+            Consolidated Receipts — {trip} {dateRangeSubtitle ? `(${dateRangeSubtitle})` : ""}
+          </span>
           <span className="text-[10px] text-neutral-500">Total Receipts: {imageReceipts.length + otherReceipts.length}</span>
         </div>
 

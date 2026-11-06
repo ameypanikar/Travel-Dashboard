@@ -9,7 +9,8 @@ import { useDecryptedNotesReminders } from "@/lib/useDecryptedNotesReminders.ts"
 import { generateGoogleCalendarLink } from "@/lib/utils";
 
 function toIso(ddmmyyyy: string): string {
-  const parts = (ddmmyyyy || "").split("/");
+  const str = ddmmyyyy || "";
+  const parts = str.includes('-') ? str.split('-').reverse() : str.split('/');
   if (parts.length !== 3) return "";
   return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
 }

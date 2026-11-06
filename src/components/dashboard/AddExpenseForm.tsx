@@ -15,6 +15,7 @@ import {
   X,
   Clock,
   RotateCcw,
+  Eye,
 } from "lucide-react";
 import {
   addExpense,
@@ -22,6 +23,8 @@ import {
   fetchFxRate,
   fetchGeminiKey,
   fetchGeminiModel,
+  fetchCompanyCards,
+  getCachedCompanyCards,
 } from "@/lib/dashboard-api";
 import type { Expense, TravelEvent } from "@/lib/dashboard-api";
 import type { SessionUser } from "@/lib/auth";
@@ -36,10 +39,19 @@ import { toast } from "sonner";
 import { EditExpenseDialog } from "./EditExpenseDialog";
 import { ReceiptViewerDialog } from "./ReceiptViewerDialog";
 import { ExpenseUploadModal, type UploadModalState } from "./ExpenseUploadModal";
-import { autoCropReceipt } from "@/lib/receipt-crop";
+import { SingleReceiptReviewModal } from "./SingleReceiptReviewModal";
+import { BatchUploadModal } from "./BatchUploadModal";
+import {
+  autoCropReceipt,
+  prepareImageForAi,
+  cropImageWithBox,
+  resolveImageMimeType,
+  compressImageForStorage,
+} from "@/lib/receipt-crop";
 import {
   GENERAL_TRAVEL,
   CATEGORIES,
+  getAvailableCategories,
   PAYMENT_METHODS,
   CARDS,
   BANKS,
@@ -64,15 +76,36 @@ import { autoRouteTransportTicket } from "@/lib/auto-router";
 import type { BookableKind } from "@/lib/booking-prompts";
 
 const RECEIPT_PROMPT =
-  "Extract expense details from this receipt/bill image or PDF and return ONLY a raw JSON object with no markdown, no backticks, just the JSON. Keys:\n" +
-  "- amount (numeric only)\n" +
-  "- currency (ISO 4217)\n" +
-  "- vendor\n" +
-  "- date (DD/MM/YYYY)\n" +
-  "- category (must be exactly one of: 'Food', 'Transport (Auto/Taxi)', 'Petrol/Diesel', 'Toll', 'Misc. Expenses')\n" +
-  "- document_type (must be exactly one of: 'expense_receipt', 'flight_ticket', 'bus_ticket', 'train_ticket')\n" +
-  "- confidence_score (number 0-100 indicating how sure you are of the document_type)\n" +
-  "Use empty string for missing fields.";
+  `You are an expert expense and receipt extraction engine. Analyze this image or document carefully.
+
+CRITICAL MULTI-RECEIPT INSTRUCTIONS:
+- Check if the photo contains MULTIPLE receipts, payment slips, or fuel bills placed side-by-side or together.
+- If MULTIPLE receipts are present:
+  1. Identify the payable/paid amount on EACH receipt (e.g. receipt 1 = 200, receipt 2 = 400, receipt 3 = 200).
+  2. If handwritten notes exist on a slip (e.g., 'Fuel 200' written on a slip), prioritize the annotated amount for that slip.
+  3. SUM ALL receipt amounts together and provide the exact mathematical sum as the 'amount' field (e.g. 200 + 400 + 200 = 800). NEVER return 0 or empty if amounts are legible!
+  4. In 'description', write an itemized breakdown: 'Multiple Receipts (<count>): <breakdown, e.g. 200 + 400 + 200 = 800>'.
+  5. In 'vendor', list the prominent vendors separated by commas (e.g. 'M S V B Naik and Sons, Fuel').
+  6. For bounding box (x_min, y_min, x_max, y_max), encompass ALL visible receipts together so none are cut off.
+
+SINGLE RECEIPT INSTRUCTIONS:
+- If only ONE receipt is present, extract its total amount, currency, vendor, date, and category.
+- If handwritten corrections or notes exist, use the corrected amount.
+
+REQUIRED JSON OUTPUT FORMAT:
+Return ONLY a raw JSON object with no markdown, no backticks, just the JSON. Keys:
+- amount (numeric string only, e.g. '800' or '450.50'. Sum of all receipts if multiple; never leave empty or 0 if numbers are visible)
+- currency (ISO 4217 3-letter code, e.g. 'INR', 'USD', 'EUR'. Default to 'INR' for Indian receipts/rupee symbol ₹)
+- vendor (merchant/store name or multiple vendors)
+- date (DD/MM/YYYY of the receipt or most recent receipt, empty string if not found)
+- category (must be exactly one of: 'Food', 'Transport (Auto/Taxi)', 'Petrol/Diesel', 'Toll', 'Misc. Expenses')
+- description (brief summary including itemized breakdown if multiple receipts)
+- payment_method (optional: 'Card', 'GPay', or 'Cash' if clearly evident from the receipt, e.g. card transaction slip, Visa, Mastercard, swipe machine, UPI, Google Pay, or cash memo)
+- card_last_4 (optional: 4-digit card ending if visible, e.g. '2001' or '6002')
+- document_type (must be exactly one of: 'expense_receipt', 'flight_ticket', 'bus_ticket', 'train_ticket')
+- confidence_score (number 0-100 indicating confidence)
+- x_min, y_min, x_max, y_max (bounding box integers 0-1000 where (0,0) is top-left and (1000,1000) is bottom-right, encompassing all receipts, excluding background/table surface)
+Use empty string for missing text fields.`;
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -105,84 +138,148 @@ type ExtractedReceiptFields = {
   vendor?: string;
   date?: string;
   category?: string;
+  description?: string;
+  payment_method?: string;
+  card_last_4?: string;
   document_type?: string;
   confidence_score?: number;
+  x_min?: number;
+  y_min?: number;
+  x_max?: number;
+  y_max?: number;
+  box_2d?: [number, number, number, number];
 };
 
-// Shared Gemini extraction call, used by both the single-receipt flow (which
-// then lets the person review/edit every field before saving) and the batch
-// flow (which saves directly, since reviewing N receipts one by one is the
-// exact tedium this feature exists to avoid). Retries once on a 429 the same
-// way AddBookingButton's flight/hotel extraction does, since batch runs are
-// more likely to hit Gemini's free-tier rate limit back-to-back.
+type ExtractAndCropResult = {
+  fields: ExtractedReceiptFields;
+  croppedFile: File | null;
+};
+
+// Resilient Gemini extraction + boundary cropping.
+// Supports multi-receipt photos with automatic amount summing,
+// automatic fallback models on Error 503 (Overloaded) or 404,
+// and exponential backoff retry.
+async function extractReceiptAndCropWithRetry(
+  file: File,
+  key: string,
+  preferredModel: string,
+  onStatus?: (s: string) => void,
+): Promise<ExtractAndCropResult> {
+  const originalMime = resolveImageMimeType(file);
+  const { base64, mimeType, img } = await prepareImageForAi(file);
+
+  // Candidate models: start with preferred, fallback to robust Google vision models
+  const candidateModels = Array.from(
+    new Set([preferredModel, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"])
+  ).filter(Boolean);
+
+  let lastError: Error | null = null;
+
+  for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
+    const currentModel = candidateModels[mIdx];
+    let attempt = 0;
+
+    while (attempt < 3) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${key}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { inline_data: { mime_type: mimeType, data: base64 } },
+                    { text: RECEIPT_PROMPT },
+                  ],
+                },
+              ],
+              generationConfig: {
+                response_mime_type: "application/json",
+                temperature: 0.1,
+              },
+            }),
+          },
+        );
+
+        // 429 Rate Limit: wait and retry
+        if (res.status === 429) {
+          attempt++;
+          if (attempt >= 3) break; // try next candidate model
+          onStatus?.(`AI rate limit hit — retrying in 3s (attempt ${attempt}/3)…`);
+          await new Promise((r) => setTimeout(r, 3000));
+          continue;
+        }
+
+        // 503 (Overloaded) or 500 / 502 / 504: transient server issue -> brief retry, then try next model
+        if (res.status === 503 || res.status === 500 || res.status === 502 || res.status === 504) {
+          attempt++;
+          if (attempt >= 2) break; // try next candidate model
+          onStatus?.(`AI service busy (Error ${res.status}) — retrying in 2s…`);
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+
+        // 404 Model Not Found: immediately break to next candidate model
+        if (res.status === 404) {
+          break;
+        }
+
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) {
+            throw new Error("API Authentication failed. Please check your Gemini API key in Settings.");
+          }
+          const errText = await res.text().catch(() => "");
+          throw new Error(`Failed to process receipt (Error ${res.status}). Please try again.`);
+        }
+
+        const json = await res.json();
+        const text: string = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+        let fields: ExtractedReceiptFields;
+        try {
+          fields = JSON.parse(text) as ExtractedReceiptFields;
+        } catch {
+          const match = text.match(/\{[\s\S]*\}/);
+          if (match) {
+            fields = JSON.parse(match[0]) as ExtractedReceiptFields;
+          } else {
+            throw new Error(`Couldn't read this receipt: ${text.slice(0, 120)}`);
+          }
+        }
+
+        let croppedFile: File | null = null;
+        if (img && originalMime) {
+          try {
+            croppedFile = await cropImageWithBox(img, fields, originalMime, file.name);
+          } catch (cropErr) {
+            console.warn("Could not crop receipt image, using original:", cropErr);
+          }
+        }
+
+        return { fields, croppedFile };
+      } catch (err) {
+        lastError = err as Error;
+        if ((err as Error).message.includes("API Authentication failed")) {
+          throw err;
+        }
+        attempt++;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+  }
+
+  throw lastError || new Error("Failed to process receipt after trying available AI models. Please try again.");
+}
+
 async function extractReceiptFieldsWithRetry(
   file: File,
   key: string,
   model: string,
   onStatus?: (s: string) => void,
 ): Promise<ExtractedReceiptFields> {
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  let mimeType = "application/pdf";
-  if (ext === "jpg" || ext === "jpeg") mimeType = "image/jpeg";
-  else if (ext === "png") mimeType = "image/png";
-  else if (ext === "webp") mimeType = "image/webp";
-
-  const base64 = await fileToBase64(file);
-
-  let attempt = 0;
-  while (attempt < 2) {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { inline_data: { mime_type: mimeType, data: base64 } },
-                { text: RECEIPT_PROMPT },
-              ],
-            },
-          ],
-          generationConfig: {
-            response_mime_type: "application/json",
-            temperature: 0.1,
-          },
-        }),
-      },
-    );
-
-    if (res.status === 429) {
-      attempt++;
-      if (attempt >= 2)
-        throw new Error("Rate limited by Gemini — try this receipt again in a bit.");
-      onStatus?.("Rate limited — waiting…");
-      await new Promise((r) => setTimeout(r, 15000));
-      continue;
-    }
-
-    if (!res.ok) {
-      const t = await res.text();
-      if (res.status === 401) {
-        throw new Error("SYSTEM UPDATE REQUIRED: Your Gemini API token is outdated or invalid. Please check your settings.");
-      }
-      throw new Error(`Gemini error ${res.status}: ${t}`);
-    }
-
-    const json = await res.json();
-    const text: string = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    try {
-      return JSON.parse(text) as ExtractedReceiptFields;
-    } catch {
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) {
-        return JSON.parse(match[0]) as ExtractedReceiptFields;
-      }
-      throw new Error(`Couldn't read this receipt: ${text.slice(0, 120)}`);
-    }
-  }
-  throw new Error("Failed after retry.");
+  const result = await extractReceiptAndCropWithRetry(file, key, model, onStatus);
+  return result.fields;
 }
 
 type BatchResult = {
@@ -212,8 +309,9 @@ export function AddExpenseForm({
   const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [trip, setTrip] = useState(() => suggestTrip(events));
   const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]);
+  const [cardsList, setCardsList] = useState<string[]>(() => getCachedCompanyCards());
   // Which card was used — only relevant/shown when paymentMethod === "Card".
-  const [cardUsed, setCardUsed] = useState(CARDS[0]);
+  const [cardUsed, setCardUsed] = useState(() => cardsList[0] || CARDS[0]);
   const [bankUsed, setBankUsed] = useState(BANKS[0]);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [cropping, setCropping] = useState(false);
@@ -233,6 +331,18 @@ export function AddExpenseForm({
     isOpen: false,
     status: "processing",
   });
+
+  // Load dynamic company cards from database/cache
+  useEffect(() => {
+    fetchCompanyCards()
+      .then((list) => {
+        if (list && list.length > 0) {
+          setCardsList(list);
+          setCardUsed((prev) => (list.includes(prev) ? prev : list[0]));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // ── Form Draft Persistence ──────────────────────────────────────────────
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
@@ -349,9 +459,31 @@ export function AddExpenseForm({
   const [batchFiles, setBatchFiles] = useState<File[]>([]);
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
   const [batchProcessing, setBatchProcessing] = useState(false);
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const batchFileInputRef = useRef<HTMLInputElement>(null);
 
+  const removeBatchFile = (index: number) => {
+    setBatchFiles((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0) setBatchModalOpen(false);
+      return next;
+    });
+    setBatchResults((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const addMoreBatchFiles = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const newFiles = Array.from(fileList);
+    setBatchFiles((prev) => [...prev, ...newFiles]);
+    setBatchResults((prev) => [
+      ...prev,
+      ...newFiles.map((f) => ({ name: f.name, status: "pending" as const })),
+    ]);
+  };
+
   const canFilterOthers = FULL_ACCESS_ROLES.includes((user.role || "").trim().toLowerCase());
+  const availableCategories = useMemo(() => getAvailableCategories(user?.role), [user?.role]);
   const [personFilter, setPersonFilter] = useState<string>("");
   const [personFilterOpen, setPersonFilterOpen] = useState(false);
 
@@ -468,21 +600,71 @@ export function AddExpenseForm({
     }
   }, [currency, expenseDate, amount]);
 
+  const handleAmountChange = (val: string) => {
+    setAmount(val);
+    const amtNum = parseAmount(val);
+    if (!Number.isNaN(amtNum)) {
+      if (currency.trim().toUpperCase() === "INR") {
+        setInrEquivalent(String(amtNum));
+      } else if (fxRate) {
+        const fxNum = parseFloat(fxRate);
+        if (!Number.isNaN(fxNum)) {
+          setInrEquivalent((amtNum * fxNum).toFixed(2));
+        }
+      }
+    }
+  };
+
+  const handleFxRateChange = (val: string) => {
+    setFxRate(val);
+    const fxNum = parseFloat(val);
+    const amtNum = parseAmount(amount);
+    if (!Number.isNaN(fxNum) && !Number.isNaN(amtNum) && amtNum > 0) {
+      setInrEquivalent((amtNum * fxNum).toFixed(2));
+    }
+  };
+
+  const handleInrEquivalentChange = (val: string) => {
+    setInrEquivalent(val);
+    const inrNum = parseAmount(val);
+    const amtNum = parseAmount(amount);
+    if (!Number.isNaN(inrNum) && !Number.isNaN(amtNum) && amtNum > 0) {
+      setFxRate((inrNum / amtNum).toFixed(4));
+    }
+  };
+
+  const handleCurrencyChange = (newCurrency: string) => {
+    const upper = newCurrency.toUpperCase();
+    setCurrency(upper);
+    if (upper === "INR") {
+      setFxRate("");
+      const amtNum = parseAmount(amount);
+      if (!Number.isNaN(amtNum)) setInrEquivalent(String(amtNum));
+    }
+  };
+
   useEffect(() => {
     const cur = currency.trim().toUpperCase();
-    if (cur && cur !== "INR" && amount) {
+    if (cur && cur !== "INR" && amount && !fxRate) {
       const timer = setTimeout(() => {
         handleResolveFx();
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [currency, amount, expenseDate, handleResolveFx]);
+  }, [currency, amount, expenseDate, fxRate, handleResolveFx]);
 
   const handleExtractReceipt = async (fileOverride?: File) => {
     const file = fileOverride ?? receiptFile;
     if (!file) return;
     setExtracting(true);
     setExtractError("");
+    setUploadModal({
+      isOpen: true,
+      status: "processing",
+      title: "Reading receipt...",
+      message: `Analyzing ${file.name} with AI...`,
+      stepDetail: "Extracting details & auto-cropping edges…",
+    });
     try {
       let key = localStorage.getItem("gemini_api_key") || "";
       if (!key) {
@@ -496,10 +678,21 @@ export function AddExpenseForm({
         setExtractError(
           "Could not load the shared Gemini API key. Ask your System Manager to set it in Settings.",
         );
+        setUploadModal((prev) => ({ ...prev, isOpen: false }));
         return;
       }
       const model = await fetchGeminiModel();
-      const parsed = await extractReceiptFieldsWithRetry(file, key, model);
+      const { fields: parsed, croppedFile } = await extractReceiptAndCropWithRetry(
+        file,
+        key,
+        model,
+        (s) => setUploadModal((prev) => ({ ...prev, stepDetail: s })),
+      );
+
+      if (croppedFile) {
+        setReceiptFile(croppedFile);
+      }
+      const finalFile = croppedFile || file;
 
       if (
         parsed.confidence_score === 100 &&
@@ -518,13 +711,14 @@ export function AddExpenseForm({
         try {
           window.dispatchEvent(
             new CustomEvent("open-add-booking", {
-              detail: { file, kind: ticketKind },
+              detail: { file: finalFile, kind: ticketKind },
             })
           );
           setReceiptFile(null);
           setExtracted(false);
           if (fileInputRef.current) fileInputRef.current.value = "";
           setExtracting(false);
+          setUploadModal((prev) => ({ ...prev, isOpen: false }));
           return;
         } catch (routeErr) {
           toast.error(
@@ -537,22 +731,49 @@ export function AddExpenseForm({
       const cur = (parsed.currency || "").trim().toUpperCase();
       if (cur) setCurrency(cur);
       setCategory(matchCategory(parsed.category));
-      setDescription((prev) => (prev.trim() ? prev : parsed.vendor || prev));
+      setDescription((prev) => (prev.trim() ? prev : parsed.description || parsed.vendor || prev));
       if (parsed.date) setExpenseDate(parseGeminiDate(parsed.date));
+
+      // Auto-detect payment method & company card if present
+      if (parsed.payment_method && PAYMENT_METHODS.includes(parsed.payment_method)) {
+        setPaymentMethod(parsed.payment_method);
+      } else {
+        const textHints = `${parsed.vendor || ""} ${parsed.description || ""}`.toLowerCase();
+        if (textHints.includes("visa") || textHints.includes("mastercard") || textHints.includes("(card)") || textHints.includes("credit card")) {
+          setPaymentMethod("Card");
+        } else if (textHints.includes("upi") || textHints.includes("gpay") || textHints.includes("google pay")) {
+          setPaymentMethod("GPay");
+        }
+      }
+      if (parsed.card_last_4) {
+        const last4 = String(parsed.card_last_4).replace(/\D/g, "").slice(-4);
+        if (last4) {
+          const allCards = cardsList.length > 0 ? cardsList : CARDS;
+          const match = allCards.find((c) => c.endsWith(last4));
+          if (match) {
+            setPaymentMethod("Card");
+            setCardUsed(match);
+          }
+        }
+      }
 
       if (cur && cur !== "INR" && parsed.amount) {
         await applyFx(cur, parsed.amount, parsed.date);
       }
 
       setExtracted(true);
-      toast.success("Receipt read — check the fields below and adjust if needed");
+      setUploadModal((prev) => ({ ...prev, isOpen: false }));
+      setReviewModalOpen(true);
     } catch (e) {
-      setExtractError(
-        (e as Error).message ||
-          "Couldn't read the receipt automatically. Fill the fields in manually.",
-      );
+      const msg = (e as Error).message || "Couldn't read the receipt automatically. Fill the fields in manually.";
+      if (msg.includes("API Authentication failed")) {
+        toast.error("Session expired or invalid key. Please log in again.");
+      } else {
+        setExtractError(msg);
+      }
     } finally {
       setExtracting(false);
+      setUploadModal((prev) => ({ ...prev, isOpen: false }));
     }
   };
 
@@ -564,10 +785,126 @@ export function AddExpenseForm({
       return;
     }
     setCropping(true);
-    const cropped = await autoCropReceipt(file);
-    setCropping(false);
-    setReceiptFile(cropped);
-    handleExtractReceipt(cropped);
+    setExtracting(true);
+    setUploadModal({
+      isOpen: true,
+      status: "processing",
+      title: "Processing receipt...",
+      message: `Analyzing ${file.name} with AI...`,
+      stepDetail: "Extracting details & auto-cropping edges…",
+    });
+    try {
+      let key = localStorage.getItem("gemini_api_key") || "";
+      if (!key) {
+        try {
+          key = await fetchGeminiKey();
+        } catch {
+          /* fall through to error below */
+        }
+      }
+      if (!key) {
+        setExtractError(
+          "Could not load the shared Gemini API key. Ask your System Manager to set it in Settings.",
+        );
+        setReceiptFile(file);
+        setUploadModal((prev) => ({ ...prev, isOpen: false }));
+        return;
+      }
+      const model = await fetchGeminiModel();
+      const { fields: parsed, croppedFile } = await extractReceiptAndCropWithRetry(
+        file,
+        key,
+        model,
+        (s) => setUploadModal((prev) => ({ ...prev, stepDetail: s })),
+      );
+
+      const finalFile = croppedFile || file;
+      setReceiptFile(finalFile);
+
+      if (
+        parsed.confidence_score === 100 &&
+        parsed.document_type &&
+        ["flight_ticket", "bus_ticket", "train_ticket"].includes(parsed.document_type)
+      ) {
+        const kindMap: Record<string, BookableKind> = {
+          flight_ticket: "flight",
+          bus_ticket: "bus",
+          train_ticket: "train",
+        };
+        const ticketKind = kindMap[parsed.document_type] as BookableKind;
+
+        toast.info(`100% Match: Identified as a ${ticketKind} ticket. Opening in Transport view for review...`);
+
+        try {
+          window.dispatchEvent(
+            new CustomEvent("open-add-booking", {
+              detail: { file: finalFile, kind: ticketKind },
+            })
+          );
+          setReceiptFile(null);
+          setExtracted(false);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          setExtracting(false);
+          setCropping(false);
+          setUploadModal((prev) => ({ ...prev, isOpen: false }));
+          return;
+        } catch (routeErr) {
+          toast.error(
+            `Failed to open Transport view: ${(routeErr as Error).message}. Falling back to expense.`,
+          );
+        }
+      }
+
+      if (parsed.amount) setAmount(String(parsed.amount));
+      const cur = (parsed.currency || "").trim().toUpperCase();
+      if (cur) setCurrency(cur);
+      setCategory(matchCategory(parsed.category));
+      setDescription((prev) => (prev.trim() ? prev : parsed.description || parsed.vendor || prev));
+      if (parsed.date) setExpenseDate(parseGeminiDate(parsed.date));
+
+      // Auto-detect payment method & company card if present
+      if (parsed.payment_method && PAYMENT_METHODS.includes(parsed.payment_method)) {
+        setPaymentMethod(parsed.payment_method);
+      } else {
+        const textHints = `${parsed.vendor || ""} ${parsed.description || ""}`.toLowerCase();
+        if (textHints.includes("visa") || textHints.includes("mastercard") || textHints.includes("(card)") || textHints.includes("credit card")) {
+          setPaymentMethod("Card");
+        } else if (textHints.includes("upi") || textHints.includes("gpay") || textHints.includes("google pay")) {
+          setPaymentMethod("GPay");
+        }
+      }
+      if (parsed.card_last_4) {
+        const last4 = String(parsed.card_last_4).replace(/\D/g, "").slice(-4);
+        if (last4) {
+          const allCards = cardsList.length > 0 ? cardsList : CARDS;
+          const match = allCards.find((c) => c.endsWith(last4));
+          if (match) {
+            setPaymentMethod("Card");
+            setCardUsed(match);
+          }
+        }
+      }
+
+      if (cur && cur !== "INR" && parsed.amount) {
+        await applyFx(cur, parsed.amount, parsed.date);
+      }
+
+      setExtracted(true);
+      setUploadModal((prev) => ({ ...prev, isOpen: false }));
+      setReviewModalOpen(true);
+    } catch (e) {
+      const msg = (e as Error).message || "Couldn't read the receipt automatically. Fill the fields in manually.";
+      if (msg.includes("API Authentication failed")) {
+        toast.error("Session expired or invalid key. Please log in again.");
+      } else {
+        setExtractError(msg);
+      }
+      setReceiptFile(file);
+    } finally {
+      setExtracting(false);
+      setCropping(false);
+      setUploadModal((prev) => ({ ...prev, isOpen: false }));
+    }
   };
 
   // ── Batch upload handlers ──────────────────────────────────────────────
@@ -576,16 +913,22 @@ export function AddExpenseForm({
     const files = Array.from(fileList);
     setBatchFiles(files);
     setBatchResults(files.map((f) => ({ name: f.name, status: "pending" })));
+    setBatchModalOpen(true);
   };
 
   const clearBatch = () => {
     setBatchFiles([]);
     setBatchResults([]);
+    setBatchModalOpen(false);
     if (batchFileInputRef.current) batchFileInputRef.current.value = "";
   };
 
-  const processBatch = async () => {
+  const processBatch = async (targetTrip?: string) => {
     if (batchFiles.length === 0) return;
+    const effectiveTrip = targetTrip || trip;
+    if (targetTrip && targetTrip !== trip) {
+      setTrip(targetTrip);
+    }
     setBatchProcessing(true);
     setUploadModal({
       isOpen: true,
@@ -622,32 +965,27 @@ export function AddExpenseForm({
         ...prev,
         batchCurrent: i + 1,
         message: `Processing receipt ${i + 1} of ${batchFiles.length}...`,
-        stepDetail: `Auto-cropping ${file.name}…`,
+        stepDetail: `Scanning & auto-cropping ${file.name}…`,
       }));
       setBatchResults((prev) =>
         prev.map((r, idx) => (idx === i ? { ...r, status: "processing" } : r)),
       );
 
       try {
-        const cropped = await autoCropReceipt(file, (msg) => {
-          setUploadModal((prev) => ({
-            ...prev,
-            stepDetail: `[${i + 1}/${batchFiles.length}] ${msg}`,
-          }));
-        });
+        const { fields: parsed, croppedFile } = await extractReceiptAndCropWithRetry(
+          file,
+          key,
+          model,
+          (s) => {
+            setBatchResults((prev) => prev.map((r, idx) => (idx === i ? { ...r, message: s } : r)));
+            setUploadModal((prev) => ({
+              ...prev,
+              stepDetail: `[${i + 1}/${batchFiles.length}] ${s}`,
+            }));
+          },
+        );
 
-        setUploadModal((prev) => ({
-          ...prev,
-          stepDetail: `[${i + 1}/${batchFiles.length}] Extracting details…`,
-        }));
-
-        const parsed = await extractReceiptFieldsWithRetry(cropped, key, model, (s) => {
-          setBatchResults((prev) => prev.map((r, idx) => (idx === i ? { ...r, message: s } : r)));
-          setUploadModal((prev) => ({
-            ...prev,
-            stepDetail: `[${i + 1}/${batchFiles.length}] ${s}`,
-          }));
-        });
+        const finalFile = croppedFile || file;
 
         if (
           parsed.confidence_score === 100 &&
@@ -666,12 +1004,12 @@ export function AddExpenseForm({
             stepDetail: `[${i + 1}/${batchFiles.length}] Identified as ${ticketKind}, routing to Transport…`,
           }));
 
-          await autoRouteTransportTicket(cropped, ticketKind, users, events, (s) => {
+          await autoRouteTransportTicket(finalFile, ticketKind, users, events, (s) => {
             setUploadModal((prev) => ({
               ...prev,
               stepDetail: `[${i + 1}/${batchFiles.length}] ${s}`,
             }));
-          }, trip);
+          }, effectiveTrip);
 
           succeeded++;
           setBatchResults((prev) =>
@@ -702,23 +1040,25 @@ export function AddExpenseForm({
 
         setUploadModal((prev) => ({
           ...prev,
-          stepDetail: `[${i + 1}/${batchFiles.length}] Uploading receipt to cloud storage…`,
+          stepDetail: `[${i + 1}/${batchFiles.length}] Compressing & uploading receipt to cloud storage…`,
         }));
+
+        const fileToUpload = await compressImageForStorage(finalFile);
 
         await addExpense({
           username: user.username,
           name: user.name,
-          trip,
+          trip: effectiveTrip,
           category: matchCategory(parsed.category),
           amount: String(parsed.amount),
           currency: cur || "INR",
-          description: parsed.vendor || "",
+          description: parsed.description || parsed.vendor || "",
           fxRate: itemFxRate,
           inrEquivalent: itemInrEquivalent,
           paymentMethod,
           cardUsed: isCard ? cardUsed : isCash ? bankUsed : "",
           expenseDate: itemExpenseDate,
-          file: cropped,
+          file: fileToUpload,
         });
 
         succeeded++;
@@ -742,7 +1082,7 @@ export function AddExpenseForm({
         title: "Uploaded Successfully!",
         successDetails: {
           count: succeeded,
-          trip,
+          trip: effectiveTrip,
         },
       });
       // Clear batch so the "Add N expenses" box disappears immediately!
@@ -765,7 +1105,7 @@ export function AddExpenseForm({
     setDescription("");
     setTrip(suggestTrip(events));
     setPaymentMethod(PAYMENT_METHODS[0]);
-    setCardUsed(CARDS[0]);
+    setCardUsed(cardsList[0] || CARDS[0]);
     setBankUsed(BANKS[0]);
     setReceiptFile(null);
     setFxRate("");
@@ -784,13 +1124,27 @@ export function AddExpenseForm({
     toast.info("Draft discarded");
   };
 
-  const handleSubmit = async () => {
-    if (!amount.trim()) {
+  const handleSubmit = async (overrides?: {
+    amount?: string;
+    currency?: string;
+    trip?: string;
+    category?: string;
+    description?: string;
+    expenseDate?: string;
+  }) => {
+    const finalAmount = (overrides?.amount !== undefined ? overrides.amount : amount).trim();
+    const finalCurrency = overrides?.currency !== undefined ? overrides.currency : currency;
+    const finalTrip = overrides?.trip !== undefined ? overrides.trip : trip;
+    const finalCategory = overrides?.category !== undefined ? overrides.category : category;
+    const finalDescription = overrides?.description !== undefined ? overrides.description : description;
+    const finalExpenseDate = overrides?.expenseDate !== undefined ? overrides.expenseDate : expenseDate;
+
+    if (!finalAmount) {
       setError("Enter an amount.");
       return;
     }
 
-    const matchingEvent = events.find((e) => e.eventname === trip);
+    const matchingEvent = events.find((e) => e.eventname === finalTrip);
     if (matchingEvent?.type === "Standing Tour") {
       if (
         !window.confirm(
@@ -812,31 +1166,33 @@ export function AddExpenseForm({
     });
 
     try {
+      const fileToUpload = receiptFile ? await compressImageForStorage(receiptFile) : null;
+
       await addExpense({
         username: user.username,
         name: user.name,
-        trip,
-        category,
-        amount,
-        currency,
-        description,
+        trip: finalTrip,
+        category: finalCategory,
+        amount: finalAmount,
+        currency: finalCurrency,
+        description: finalDescription,
         fxRate,
         inrEquivalent,
         paymentMethod,
         cardUsed: isCard ? cardUsed : isCash ? bankUsed : "",
-        expenseDate,
-        file: receiptFile,
+        expenseDate: finalExpenseDate,
+        file: fileToUpload,
       });
       setUploadModal({
         isOpen: true,
         status: "success",
         title: "Expense Added Successfully!",
         successDetails: {
-          amount,
-          currency,
-          category,
-          trip,
-          description,
+          amount: finalAmount,
+          currency: finalCurrency,
+          category: finalCategory,
+          trip: finalTrip,
+          description: finalDescription,
         },
       });
       toast.success("✅ Expense added");
@@ -915,15 +1271,15 @@ export function AddExpenseForm({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={cropping}
+                disabled={cropping || extracting}
                 className="flex w-full flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-border py-4 text-xs font-semibold text-muted-foreground transition hover:border-accent hover:text-accent disabled:opacity-60"
               >
-                {cropping ? (
+                {cropping || extracting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Paperclip className="h-4 w-4" />
                 )}
-                {cropping ? (
+                {cropping || extracting ? (
                   <span>{t("add_expense.cropping")}</span>
                 ) : (
                   <span>{t("add_expense.attach_receipt")}</span>
@@ -950,7 +1306,15 @@ export function AddExpenseForm({
             )}
 
             {receiptFile && (
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setReviewModalOpen(true)}
+                  className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20"
+                >
+                  <Eye className="h-3 w-3" />
+                  <span>Check amount & trip</span>
+                </button>
                 <button
                   onClick={() => handleExtractReceipt()}
                   disabled={extracting}
@@ -973,28 +1337,9 @@ export function AddExpenseForm({
             )}
 
             {extractError && (
-              extractError.includes("SYSTEM UPDATE REQUIRED") ? (
-                <div className="mt-2 rounded border border-destructive/20 bg-destructive/5 py-2 overflow-hidden flex whitespace-nowrap relative w-full">
-                  <style>{`
-                    @keyframes marquee-rtl {
-                      0% { transform: translateX(100%); }
-                      100% { transform: translateX(-100%); }
-                    }
-                    .animate-marquee-local {
-                      animation: marquee-rtl 15s linear infinite;
-                      will-change: transform;
-                    }
-                  `}</style>
-                  <div className="animate-marquee-local text-[11px] font-semibold text-destructive tracking-wide w-full flex-shrink-0 flex gap-8">
-                    <span>🚀 {extractError}</span>
-                    <span>🚀 {extractError}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-2 rounded border border-destructive/20 bg-destructive/5 p-2 text-[11px] text-destructive">
-                  {extractError}
-                </div>
-              )
+              <div className="mt-2 rounded border border-destructive/20 bg-destructive/5 p-2 text-[11px] text-destructive">
+                {extractError}
+              </div>
             )}
             <p className="mt-1.5 text-[10px] text-muted-foreground">
               {t("add_expense.receipt_desc")}
@@ -1089,7 +1434,7 @@ export function AddExpenseForm({
 
                 <div className="mt-2 flex justify-end">
                   <button
-                    onClick={processBatch}
+                    onClick={() => setBatchModalOpen(true)}
                     disabled={batchProcessing}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground disabled:opacity-60"
                   >
@@ -1119,7 +1464,7 @@ export function AddExpenseForm({
               </label>
               <input
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => handleAmountChange(e.target.value)}
                 placeholder="e.g. 450"
                 className="w-full rounded border bg-background px-2 py-1.5"
               />
@@ -1130,7 +1475,7 @@ export function AddExpenseForm({
               </label>
               <input
                 value={currency}
-                onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+                onChange={(e) => handleCurrencyChange(e.target.value)}
                 maxLength={3}
                 className="w-full rounded border bg-background px-2 py-1.5 uppercase"
               />
@@ -1156,7 +1501,7 @@ export function AddExpenseForm({
                 onChange={(e) => setCategory(e.target.value)}
                 className="w-full rounded border bg-background px-2 py-1.5"
               >
-                {CATEGORIES.map((c) => (
+                {availableCategories.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -1194,7 +1539,7 @@ export function AddExpenseForm({
                 onChange={(e) => setCardUsed(e.target.value)}
                 className="w-full rounded border bg-background px-2 py-1.5"
               >
-                {CARDS.map((c) => (
+                {cardsList.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -1275,7 +1620,7 @@ export function AddExpenseForm({
                   </label>
                   <input
                     value={fxRate}
-                    onChange={(e) => setFxRate(e.target.value)}
+                    onChange={(e) => handleFxRateChange(e.target.value)}
                     className="w-full rounded border bg-background px-2 py-1.5"
                   />
                 </div>
@@ -1285,7 +1630,7 @@ export function AddExpenseForm({
                   </label>
                   <input
                     value={inrEquivalent}
-                    onChange={(e) => setInrEquivalent(e.target.value)}
+                    onChange={(e) => handleInrEquivalentChange(e.target.value)}
                     className="w-full rounded border bg-background px-2 py-1.5"
                   />
                 </div>
@@ -1302,7 +1647,7 @@ export function AddExpenseForm({
 
         <div className="mt-4 flex justify-end">
           <button
-            onClick={handleSubmit}
+            onClick={() => handleSubmit()}
             disabled={saving}
             className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground disabled:opacity-60"
           >
@@ -1503,6 +1848,69 @@ export function AddExpenseForm({
           }
         />
       )}
+
+      <SingleReceiptReviewModal
+        open={reviewModalOpen}
+        file={receiptFile}
+        amount={amount}
+        setAmount={handleAmountChange}
+        currency={currency}
+        setCurrency={handleCurrencyChange}
+        trip={trip}
+        setTrip={setTrip}
+        tripOptions={tripOptions}
+        paymentMethod={paymentMethod}
+        setPaymentMethod={setPaymentMethod}
+        cardUsed={cardUsed}
+        setCardUsed={setCardUsed}
+        cardsList={cardsList}
+        bankUsed={bankUsed}
+        setBankUsed={setBankUsed}
+        category={category}
+        setCategory={setCategory}
+        availableCategories={availableCategories}
+        description={description}
+        setDescription={setDescription}
+        expenseDate={expenseDate}
+        setExpenseDate={setExpenseDate}
+        inrEquivalent={inrEquivalent}
+        saving={saving}
+        onConfirmAdd={() => {
+          setReviewModalOpen(false);
+          handleSubmit();
+        }}
+        onEditInForm={() => {
+          setReviewModalOpen(false);
+        }}
+        onClose={() => {
+          setReviewModalOpen(false);
+        }}
+      />
+
+      <BatchUploadModal
+        open={batchModalOpen}
+        files={batchFiles}
+        onRemoveFile={removeBatchFile}
+        onAddMoreFiles={addMoreBatchFiles}
+        trip={trip}
+        setTrip={setTrip}
+        tripOptions={tripOptions}
+        paymentMethod={paymentMethod}
+        setPaymentMethod={setPaymentMethod}
+        cardUsed={cardUsed}
+        setCardUsed={setCardUsed}
+        cardsList={cardsList}
+        bankUsed={bankUsed}
+        setBankUsed={setBankUsed}
+        processing={batchProcessing}
+        onConfirmUpload={(chosenTrip) => {
+          setBatchModalOpen(false);
+          processBatch(chosenTrip);
+        }}
+        onClose={() => {
+          setBatchModalOpen(false);
+        }}
+      />
 
       <ExpenseUploadModal
         state={uploadModal}

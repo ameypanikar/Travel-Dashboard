@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { saveGeminiKey, fetchGeminiKey, saveGeminiModel, fetchGeminiModel, addUser, removeUser } from "@/lib/dashboard-api";
+import { saveGeminiKey, fetchGeminiKey, saveGeminiModel, fetchGeminiModel, addUser, removeUser, fetchCompanyCards, saveCompanyCards } from "@/lib/dashboard-api";
 import type { SessionUser } from "@/lib/auth";
 import { sha256Hex } from "@/lib/auth";
 import { FULL_ACCESS_ROLES } from "@/lib/role-filter";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { UserPlus, Trash2, Loader2, Settings2, Bot, Users, Smartphone, Key, Moon, Sun, KeyRound } from "lucide-react";
+import { UserPlus, Trash2, Loader2, Settings2, Bot, Users, Smartphone, Key, Moon, Sun, KeyRound, CreditCard, Plus } from "lucide-react";
 import { useTheme } from "@/hooks/use-theme";
 
 type UserEntry = { name: string; username: string; role: string };
@@ -62,7 +62,14 @@ export function SettingsModal({ user, users, onClose, onRefresh, onChangePasswor
   const [removeLoading, setRemoveLoading] = useState(false);
   const [removeError, setRemoveError] = useState("");
 
-  const [activeTab, setActiveTab] = useState<"preferences" | "ai" | "users">("preferences");
+  // ── Company Cards state ──────────────────────────────────────────
+  const [cards, setCards] = useState<string[]>([]);
+  const [cardsLoading, setCardsLoading] = useState(true);
+  const [newCardInput, setNewCardInput] = useState("");
+  const [cardError, setCardError] = useState<string | null>(null);
+  const [cardSaving, setCardSaving] = useState(false);
+
+  const [activeTab, setActiveTab] = useState<"preferences" | "ai" | "users" | "cards">("preferences");
   const [enableSwipe, setEnableSwipe] = useState(() => localStorage.getItem("enableSwipe") !== "false");
 
   const handleToggleSwipe = () => {
@@ -85,6 +92,11 @@ export function SettingsModal({ user, users, onClose, onRefresh, onChangePasswor
       .then((model) => { if (!cancelled) setCurrentModel(model); })
       .catch(() => { if (!cancelled) setCurrentModel("gemini-3.1-flash-lite"); })
       .finally(() => { if (!cancelled) setModelLoading(false); });
+
+    fetchCompanyCards()
+      .then((list) => { if (!cancelled) setCards(list); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setCardsLoading(false); });
 
     return () => { cancelled = true; };
   }, []);
@@ -209,6 +221,12 @@ export function SettingsModal({ user, users, onClose, onRefresh, onChangePasswor
               className={`pb-2 border-b-2 transition-colors ${activeTab === "users" ? "border-accent text-accent" : "border-transparent hover:text-foreground"}`}
             >
               Users
+            </button>
+            <button
+              onClick={() => setActiveTab("cards")}
+              className={`pb-2 border-b-2 transition-colors ${activeTab === "cards" ? "border-accent text-accent" : "border-transparent hover:text-foreground"}`}
+            >
+              Cards
             </button>
           </div>
         )}
@@ -525,6 +543,124 @@ export function SettingsModal({ user, users, onClose, onRefresh, onChangePasswor
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === "cards" && (
+            <div className="space-y-4 animate-fade-in">
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Company Credit Cards
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Cards listed here appear in the expense form and travel vouchers. Only authorized users can manage them.
+                </p>
+              </div>
+
+              {cardError && (
+                <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-2.5 text-xs text-destructive">
+                  {cardError}
+                </div>
+              )}
+
+              {cardsLoading ? (
+                <div className="flex items-center justify-center py-6 text-xs text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading cards…
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-0.5">
+                  {cards.map((card) => (
+                    <div
+                      key={card}
+                      className="flex items-center justify-between rounded-lg border border-border bg-card p-2.5 text-xs shadow-xs"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className="rounded-md bg-accent/10 p-1.5 text-accent">
+                          <CreditCard className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p className="font-mono font-medium text-foreground">{card}</p>
+                          <p className="text-[10px] text-muted-foreground">Ending in {card.replace(/\D/g, "").slice(-4) || card}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (cards.length <= 1) {
+                            setCardError("At least one company card must remain in the system");
+                            return;
+                          }
+                          const updated = cards.filter((c) => c !== card);
+                          setCardSaving(true);
+                          setCardError(null);
+                          try {
+                            await saveCompanyCards(updated);
+                            setCards(updated);
+                          } catch (err) {
+                            setCardError((err as Error).message);
+                          } finally {
+                            setCardSaving(false);
+                          }
+                        }}
+                        disabled={cardSaving}
+                        className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-40"
+                        title="Remove card"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const trimmed = newCardInput.trim();
+                  if (!trimmed) return;
+                  let formatted = trimmed;
+                  if (/^\d{4}$/.test(trimmed)) {
+                    formatted = `XXXX XXXX XXXX ${trimmed}`;
+                  }
+                  if (cards.includes(formatted)) {
+                    setCardError("Card already exists in the list");
+                    return;
+                  }
+                  const updated = [...cards, formatted];
+                  setCardSaving(true);
+                  setCardError(null);
+                  try {
+                    await saveCompanyCards(updated);
+                    setCards(updated);
+                    setNewCardInput("");
+                  } catch (err) {
+                    setCardError((err as Error).message);
+                  } finally {
+                    setCardSaving(false);
+                  }
+                }}
+                className="pt-3 border-t border-border space-y-2"
+              >
+                <label className="block text-xs font-medium text-foreground">Add New Card</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newCardInput}
+                    onChange={(e) => setNewCardInput(e.target.value)}
+                    placeholder="XXXX XXXX XXXX 1234 or 1234"
+                    className="flex-1 rounded-lg border border-input bg-background px-3 py-1.5 text-xs font-mono outline-none focus:ring-2 focus:ring-accent/40"
+                  />
+                  <button
+                    type="submit"
+                    disabled={cardSaving || !newCardInput.trim()}
+                    className="inline-flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground disabled:opacity-50"
+                  >
+                    {cardSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                    Add
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Tip: Enter 4 digits (e.g. 5566) or full card label.</p>
+              </form>
             </div>
           )}
         </div>

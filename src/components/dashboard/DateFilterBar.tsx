@@ -47,11 +47,11 @@ export function DateFilterBar({
           <Button
             variant="outline"
             className={cn(
-              "h-10 flex-1 justify-start gap-2 rounded-xl border-border bg-card text-left text-sm font-semibold shadow-card hover:bg-accent-soft",
+              "h-10 flex-1 min-w-0 justify-start gap-1.5 px-2.5 sm:px-3 rounded-xl border-border bg-card text-left text-xs sm:text-sm font-semibold shadow-card hover:bg-accent-soft",
               hasValue ? "text-accent" : "text-muted-foreground",
             )}
           >
-            <CalendarIcon className="h-4 w-4" />
+            <CalendarIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
             <span className="truncate">{displayLabel}</span>
           </Button>
         </PopoverTrigger>
@@ -91,15 +91,16 @@ export function DateFilterBar({
       {hasValue && (
         <Button
           variant="outline"
+          size="icon"
           onClick={() => {
             if (mode === "single") onSingleChange?.(null);
             else onRangeChange?.(null);
           }}
-          className="h-10 rounded-xl border-border bg-card text-accent shadow-card hover:bg-accent-soft"
+          className="h-10 w-10 shrink-0 rounded-xl border-border bg-card text-accent shadow-card hover:bg-accent-soft p-0"
           aria-label="Clear date filter"
+          title="Clear date filter"
         >
           <X className="h-4 w-4" />
-          Clear
         </Button>
       )}
     </div>

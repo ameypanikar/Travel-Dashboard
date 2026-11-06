@@ -11,7 +11,7 @@ function toIsoDate(dateStr?: string): string {
   if (!dateStr) return "";
   const trimmed = dateStr.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
-  const parts = trimmed.split("/");
+  const parts = (trimmed.includes('-') ? trimmed.split('-').reverse() : trimmed.split('/'));
   if (parts.length === 3) {
     const [dd, mm, yyyy] = parts;
     if (yyyy.length === 4) return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
@@ -114,6 +114,49 @@ export function SpendEditDialog({
 
   const isForeign = currency.trim() !== "" && currency.trim().toUpperCase() !== "INR";
 
+  const handleAmountChange = (val: string) => {
+    setAmount(val);
+    const amtNum = parseAmount(val);
+    if (!Number.isNaN(amtNum)) {
+      if (currency.trim().toUpperCase() === "INR") {
+        setInrEquivalent(String(amtNum));
+      } else if (fxRate) {
+        const fxNum = parseFloat(fxRate);
+        if (!Number.isNaN(fxNum)) {
+          setInrEquivalent((amtNum * fxNum).toFixed(2));
+        }
+      }
+    }
+  };
+
+  const handleFxRateChange = (val: string) => {
+    setFxRate(val);
+    const fxNum = parseFloat(val);
+    const amtNum = parseAmount(amount);
+    if (!Number.isNaN(fxNum) && !Number.isNaN(amtNum) && amtNum > 0) {
+      setInrEquivalent((amtNum * fxNum).toFixed(2));
+    }
+  };
+
+  const handleInrEquivalentChange = (val: string) => {
+    setInrEquivalent(val);
+    const inrNum = parseAmount(val);
+    const amtNum = parseAmount(amount);
+    if (!Number.isNaN(inrNum) && !Number.isNaN(amtNum) && amtNum > 0) {
+      setFxRate((inrNum / amtNum).toFixed(4));
+    }
+  };
+
+  const handleCurrencyChange = (newCurrency: string) => {
+    const upper = newCurrency.toUpperCase();
+    setCurrency(upper);
+    if (upper === "INR") {
+      setFxRate("");
+      const amtNum = parseAmount(amount);
+      if (!Number.isNaN(amtNum)) setInrEquivalent(String(amtNum));
+    }
+  };
+
   const handleResolveFx = async () => {
     const cur = currency.trim().toUpperCase();
     if (!cur || cur === "INR") return;
@@ -191,7 +234,7 @@ export function SpendEditDialog({
             <label className="mb-1 block font-semibold text-muted-foreground">{amountLabel}</label>
             <input
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => handleAmountChange(e.target.value)}
               placeholder="e.g. 4500"
               className="w-full rounded border bg-background px-2 py-1.5"
             />
@@ -239,7 +282,7 @@ export function SpendEditDialog({
               <label className="mb-1 block font-semibold text-muted-foreground">Currency</label>
               <input
                 value={currency}
-                onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+                onChange={(e) => handleCurrencyChange(e.target.value)}
                 placeholder="INR"
                 maxLength={3}
                 className="w-full rounded border bg-background px-2 py-1.5 uppercase"
@@ -300,7 +343,7 @@ export function SpendEditDialog({
                   <label className="mb-1 block text-[10px] text-muted-foreground">FX rate (1 {currency || "___"} = ? INR)</label>
                   <input
                     value={fxRate}
-                    onChange={(e) => setFxRate(e.target.value)}
+                    onChange={(e) => handleFxRateChange(e.target.value)}
                     placeholder="e.g. 83.12"
                     className="w-full rounded border bg-background px-2 py-1.5"
                   />
@@ -309,7 +352,7 @@ export function SpendEditDialog({
                   <label className="mb-1 block text-[10px] text-muted-foreground">INR equivalent</label>
                   <input
                     value={inrEquivalent}
-                    onChange={(e) => setInrEquivalent(e.target.value)}
+                    onChange={(e) => handleInrEquivalentChange(e.target.value)}
                     placeholder="e.g. 373950.00"
                     className="w-full rounded border bg-background px-2 py-1.5"
                   />

@@ -80,10 +80,10 @@ export function AddNoteReminderModal({
     );
     if (!res.ok) {
       const t = await res.text();
-      if (res.status === 401) {
-        throw new Error("SYSTEM UPDATE REQUIRED: Your Gemini API token is outdated or invalid. Please check your settings.");
+      if (res.status === 401 || res.status === 403) {
+        throw new Error("API Authentication failed. Please check your credentials or log in again.");
       }
-      throw new Error(`Gemini error ${res.status}: ${t}`);
+      throw new Error(`Failed to process note (Error ${res.status}). Please try again.`);
     }
     const json = await res.json();
     const text: string = json?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
@@ -264,28 +264,9 @@ export function AddNoteReminderModal({
           )}
 
           {error && (
-            error.includes("SYSTEM UPDATE REQUIRED") ? (
-              <div className="rounded-lg border border-destructive/20 bg-destructive/5 py-3 overflow-hidden flex whitespace-nowrap relative w-full">
-                <style>{`
-                  @keyframes marquee-rtl {
-                    0% { transform: translateX(100%); }
-                    100% { transform: translateX(-100%); }
-                  }
-                  .animate-marquee-local {
-                    animation: marquee-rtl 15s linear infinite;
-                    will-change: transform;
-                  }
-                `}</style>
-                <div className="animate-marquee-local text-xs font-semibold text-destructive tracking-wide w-full flex-shrink-0 flex gap-8">
-                  <span>🚀 {error}</span>
-                  <span>🚀 {error}</span>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
-                {error}
-              </div>
-            )
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
+              {error}
+            </div>
           )}
 
           {items && (
